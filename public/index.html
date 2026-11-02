@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>海上油田人员直升机运载计划编排</title>
+<meta name="description" content="海上油田人员直升机运载计划编排：方案校验、零知识成绩证书生成与验证。">
+<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#f5f8f7;color:#1d363b;font:16px system-ui,sans-serif}canvas{width:100%;height:100%;display:block}#loading{position:absolute;inset:0;display:grid;place-content:center;text-align:center;gap:12px}#loading h1{font-size:26px;color:#1b766a;margin:0}#loading p{font-size:14px;color:#627777;margin:0;max-width:550px;padding:16px}#loading[hidden]{display:none}</style>
+</head>
+<body>
+<canvas id="flight" aria-label="海上油田人员直升机运载计划编排"></canvas>
+<div id="loading"><h1>海上油田人员直升机运载计划编排</h1><p id="loading-text">正在加载界面…</p></div>
+<noscript>此应用需要 JavaScript 和 WebAssembly。</noscript>
+<script type="module">
+import './bridge.js';
+import init,{start} from './ui/flight_ui.js';
+try{await init();await start(document.getElementById('flight'));document.getElementById('loading').hidden=true;}
+catch(e){console.error(e);document.getElementById('loading-text').textContent='界面加载失败，请刷新或使用支持 WebGL2 的浏览器。';}
+</script>
+</body>
+</html>

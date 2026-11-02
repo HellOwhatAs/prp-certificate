@@ -1,0 +1,170 @@
+name: Build and publish Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag, for example v0.3.0'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - id: tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, re, subprocess
+          tag=os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'v[0-9][A-Za-z0-9._-]*',tag):
+              raise SystemExit('Expected a version tag such as v0.3.0')
+          sha=subprocess.check_output(['git','rev-parse','--verify',f'refs/tags/{tag}^{{commit}}'],text=True).strip()
+          head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          if head != sha:
+              raise SystemExit('The checkout does not match the requested tag')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as output:
+              output.write(f'tag={tag}\nsha={sha}\n')
+          PY
+  desktop:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x64
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            label: linux-arm64
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            label: windows-arm64
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            label: macos-x64
+          - os: macos-15
+            target: aarch64-apple-darwin
+            label: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev pkg-config
+      - name: Test native workspace
+        run: cargo test --locked --release --workspace --target ${{ matrix.target }}
+      - name: Build native application
+        run: cargo build --locked --release --bin flight-ui --target ${{ matrix.target }}
+      - name: Package application
+        run: python scripts/package-desktop.py --target ${{ matrix.target }} --label ${{ matrix.label }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.label }}
+          path: release/prp-flight-*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+  common:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: python scripts/test-parameter-integrity.py
+      - run: npm test
+      - run: node scripts/test-parameters.mjs
+      - name: Build static Pages download from the same release commit
+        env:
+          RELEASE_COMMIT: ${{ needs.resolve.outputs.sha }}
+        run: npm run build:pages -- --ref "$RELEASE_COMMIT"
+      - run: node scripts/test-pages-build.mjs
+      - run: node scripts/test-web-preflight.mjs
+      - name: Package common parameters, source and static website
+        run: python scripts/package-common.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: common-downloads
+          path: release/*.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+  publish:
+    needs: [resolve, desktop, common]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Create checksums and publish all assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          root=Path('release')
+          assets=sorted(p for p in root.iterdir() if p.is_file())
+          if len(assets)!=11:
+              raise SystemExit(f'Expected 6 desktop + 3 parameter + source + Pages packages, got {len(assets)}')
+          with (root/'SHA256SUMS.txt').open('w') as out:
+              for path in assets:
+                  with path.open('rb') as stream:
+                      digest=hashlib.file_digest(stream,'sha256').hexdigest()
+                  out.write(f'{digest}  {path.name}\n')
+          PY
+          cat > release-notes.md <<'EOF'
+          海上油田人员直升机运载计划编排：Windows、macOS、Linux 的 x64 / ARM64 桌面程序。
+
+          - 下载对应系统的程序包并解压；验证证书不需要大参数。
+          - 生成第 N 问证书：将 prp-flight-parameters-qN.zip 内的 public 文件夹合并到 flight-ui 可执行文件所在目录。三问参数跨平台通用，可按需下载。
+          - prp-certificate-source.zip 包含源码与部署说明；参数由三个独立参数包提供。
+          - prp-certificate-pages.zip 是静态网站文件；公开参数地址固定到本次发布提交。
+          - SHA256SUMS.txt 提供所有附件的 SHA-256。程序未作 Windows / Apple 开发者签名。
+          EOF
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --target "$RELEASE_SHA" --draft --title "$RELEASE_TAG" --notes-file release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" release/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

@@ -1,0 +1,12 @@
+import fs from 'node:fs/promises';
+import {checkSolution,toWitness} from '../src/checker.js';
+const dir=process.env.REFERENCE_DIR;
+if(!dir)throw Error('Set REFERENCE_DIR to the private trial_solve folder');
+const testDir=process.env.ZK_TEST_DIR||'.cache/zk-tests';
+const D=JSON.parse(await fs.readFile('public/data/instance.json'));
+const routes=await fs.readFile(`${dir}/q3-routes.csv`,'utf8');
+const temporary=new Set(D.people[3].filter(p=>p.task==='temporary').map(p=>p.id));
+const a=(await fs.readFile(`${dir}/q3-assignments.csv`,'utf8')).split(/\r?\n/).map(line=>temporary.has(line.split(',')[0])?line.split(',')[0]+',,,,':line).join('\n');
+const r=checkSolution(D,3,routes,a,{baseline:true});if(!r.ok)throw Error(r.errors.join('\n'));
+await fs.writeFile(`${testDir}/q3-base-witness.json`,JSON.stringify(toWitness(r,new Uint8Array(32))));
+console.log('Baseline feasible',r.score);

@@ -1,0 +1,12 @@
+{
+  "name": "prp-flight-certificate",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node tests/checker.test.mjs",
+    "build:rust": "node scripts/build-rust.mjs",
+    "build:pages": "node scripts/build-pages.mjs"
+  }
+}

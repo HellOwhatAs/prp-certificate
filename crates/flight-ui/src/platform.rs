@@ -1,0 +1,195 @@
+use eframe::egui;
+use serde_json::Value;
+use std::sync::{Arc, Mutex};
+
+pub enum FileEvent {
+    Loaded {
+        slot: usize,
+        name: String,
+        bytes: Vec<u8>,
+    },
+    Saved(String),
+    Error(String),
+}
+pub type FileQueue = Arc<Mutex<Vec<FileEvent>>>;
+fn deliver(queue: &FileQueue, ctx: &egui::Context, event: FileEvent) {
+    queue.lock().unwrap().push(event);
+    ctx.request_repaint();
+}
+pub fn pick(slot: usize, queue: FileQueue, ctx: egui::Context) {
+    let task = async move {
+        let dialog = if slot == 4 {
+            rfd::AsyncFileDialog::new().add_filter("证书", &["png", "jpg", "jpeg"])
+        } else {
+            rfd::AsyncFileDialog::new().add_filter("CSV", &["csv"])
+        };
+        if slot == 4 {
+            if let Some(files) = dialog.pick_files().await {
+                if files.len() > 20 {
+                    deliver(
+                        &queue,
+                        &ctx,
+                        FileEvent::Error("每次最多导入 20 份证书".into()),
+                    );
+                    return;
+                }
+                for f in files {
+                    deliver(
+                        &queue,
+                        &ctx,
+                        FileEvent::Loaded {
+                            slot,
+                            name: f.file_name(),
+                            bytes: f.read().await,
+                        },
+                    );
+                }
+            }
+        } else if let Some(f) = dialog.pick_file().await {
+            deliver(
+                &queue,
+                &ctx,
+                FileEvent::Loaded {
+                    slot,
+                    name: f.file_name(),
+                    bytes: f.read().await,
+                },
+            );
+        }
+    };
+    spawn(task);
+}
+pub fn save(name: String, bytes: Vec<u8>, queue: FileQueue, ctx: egui::Context) {
+    spawn(async move {
+        if let Some(f) = rfd::AsyncFileDialog::new()
+            .set_file_name(&name)
+            .save_file()
+            .await
+        {
+            match f.write(&bytes).await {
+                Ok(()) => deliver(&queue, &ctx, FileEvent::Saved(name)),
+                Err(e) => deliver(&queue, &ctx, FileEvent::Error(format!("保存失败：{e}"))),
+            }
+        }
+    });
+}
+#[cfg(target_arch = "wasm32")]
+fn spawn(f: impl std::future::Future<Output = ()> + 'static) {
+    wasm_bindgen_futures::spawn_local(f);
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn(f: impl std::future::Future<Output = ()> + Send + 'static) {
+    std::thread::spawn(move || pollster::block_on(f));
+}
+
+#[cfg(target_arch = "wasm32")]
+mod target {
+    use super::*;
+    use wasm_bindgen::prelude::*;
+    #[wasm_bindgen(js_namespace=flightBridge)]
+    extern "C" {
+        #[wasm_bindgen(catch)]
+        fn send(text: &str) -> Result<(), JsValue>;
+        fn drain() -> String;
+        fn cancel();
+    }
+    pub struct Backend;
+    impl Backend {
+        pub fn new() -> Self {
+            Self
+        }
+        pub fn send(&mut self, value: Value) -> Result<(), String> {
+            send(&value.to_string()).map_err(|e| format!("计算引擎启动失败：{e:?}"))
+        }
+        pub fn drain(&mut self) -> Vec<Value> {
+            serde_json::from_str(&drain()).unwrap_or_default()
+        }
+        pub fn cancel(&mut self) {
+            cancel();
+        }
+    }
+}
+#[cfg(not(target_arch = "wasm32"))]
+mod target {
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::{Child, Command, Stdio};
+    use std::sync::mpsc::{self, Receiver};
+    pub struct Backend {
+        child: Option<Child>,
+        receiver: Option<Receiver<Value>>,
+    }
+    impl Backend {
+        pub fn new() -> Self {
+            Self {
+                child: None,
+                receiver: None,
+            }
+        }
+        pub fn send(&mut self, value: Value) -> Result<(), String> {
+            self.cancel();
+            let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+            let mut command = Command::new(executable);
+            command
+                .arg(if value["action"] == "import" {
+                    "--import"
+                } else {
+                    "--engine"
+                })
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000);
+            }
+            let mut child = command
+                .spawn()
+                .map_err(|e| format!("无法启动 Rust 计算引擎：{e}"))?;
+            writeln!(child.stdin.take().ok_or("无法打开引擎输入")?, "{value}")
+                .map_err(|e| e.to_string())?;
+            let stdout = child.stdout.take().ok_or("无法打开引擎输出")?;
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let mut complete = false;
+                for line in BufReader::new(stdout).lines() {
+                    let Ok(line) = line else {
+                        break;
+                    };
+                    if let Ok(message) = serde_json::from_str::<Value>(&line) {
+                        if message["type"] == "result" || message["type"] == "error" {
+                            complete = true;
+                        }
+                        let _ = sender.send(message);
+                    }
+                }
+                if !complete {
+                    let _=sender.send(serde_json::json!({"type":"error","message":"本地计算进程中断，请检查可用内存和发行包完整性"}));
+                }
+            });
+            self.child = Some(child);
+            self.receiver = Some(receiver);
+            Ok(())
+        }
+        pub fn drain(&mut self) -> Vec<Value> {
+            self.receiver
+                .as_ref()
+                .map(|r| r.try_iter().collect())
+                .unwrap_or_default()
+        }
+        pub fn cancel(&mut self) {
+            if let Some(mut child) = self.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            self.receiver = None;
+        }
+    }
+    impl Drop for Backend {
+        fn drop(&mut self) {
+            self.cancel();
+        }
+    }
+}
+pub use target::Backend;
