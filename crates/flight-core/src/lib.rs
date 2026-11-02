@@ -1,7 +1,7 @@
 pub mod checker;
 mod engine;
-mod parameters;
 pub mod groth16;
+mod parameters;
 pub use engine::{run_job, verify_certificate};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -25,6 +25,15 @@ pub fn run_native_stdio() {
         let circuit = vec![];
         let mut g1 = vec![];
         if job["action"] == "prove" {
+            let checked = run_job(
+                json!({"action":"check","q":job["q"],"files":job["files"]}),
+                vec![],
+                vec![],
+                |_| {},
+            )?;
+            if checked["canProve"] != true {
+                return Err("当前证明上限为 256 架次".into());
+            }
             let q = job["q"]
                 .as_u64()
                 .filter(|n| (1..=3).contains(n))

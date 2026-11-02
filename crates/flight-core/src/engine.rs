@@ -59,6 +59,17 @@ fn vk(q: usize) -> Result<VerifyingKey<Bn254>, String> {
     VerifyingKey::deserialize_compressed(bytes.as_slice()).map_err(err)
 }
 pub fn verify_certificate(value: Value, mut progress: impl FnMut(&str)) -> Result<Value, String> {
+    let set = flight_format::CertificateSet::from_value(&value)?;
+    let mut scores = vec![];
+    for c in &set.certificates {
+        let result = verify_single(serde_json::to_value(c).map_err(err)?, &mut progress)
+            .map_err(|e| format!("第 {} 问：{e}", c.metadata.question))?;
+        scores.push(result["scores"][0].clone());
+    }
+    Ok(json!({"certificate":set,"scores":scores}))
+}
+
+fn verify_single(value: Value, mut progress: impl FnMut(&str)) -> Result<Value, String> {
     let c: Certificate = serde_json::from_value(value).map_err(err)?;
     c.metadata.validate()?;
     ensure!(
@@ -150,11 +161,11 @@ pub fn run_job(
             proof.serialize_compressed(&mut bytes).map_err(err)?;
             ensure!(bytes.len() == PROOF_BYTES, "证明尺寸异常");
             verify_certificate(
-                serde_json::to_value(Certificate {
+                serde_json::to_value(flight_format::CertificateSet::new(vec![Certificate {
                     metadata: m,
                     proof: STANDARD.encode(bytes),
                     scores,
-                })
+                }])?)
                 .map_err(err)?,
                 progress,
             )

@@ -2,6 +2,8 @@
 
 目标仓库：<https://github.com/HellOwhatAs/prp-certificate>。本包未向远端推送任何文件，也未替你开启 Pages 或发布 Release。
 
+本版使用三合一 PNG（PRG2），不读取旧证书或迁移旧记录。已有三个参数包保持不变，可以直接复用。
+
 ## 1. 下载并合并
 
 | 下载文件 | 内容 | 是否需要 |
@@ -73,13 +75,13 @@ python scripts/test-parameter-integrity.py
 代码和三个参数包全部上传后，创建一个新版本标签：
 
 ```sh
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.4.1
+git push origin v0.4.1
 ```
 
-这会触发 **Actions → Build and publish Release**。以后使用新的版本号，例如 `v0.3.1`；不要覆盖旧标签。
+这会触发 **Actions → Build and publish Release**。以后使用新的版本号，例如 `v0.4.2`；不要覆盖旧标签。
 
-也可在 Actions 手动运行：在 `tag` 输入框填写一个**已经推送到仓库**的标签，例如 `v0.3.0`。工作流会核对标签并让所有构建使用同一提交。
+也可在 Actions 手动运行：在 `tag` 输入框填写一个**已经推送到仓库**的标签，例如 `v0.4.1`。工作流会核对标签并让所有构建使用同一提交。
 
 | 系统 | 架构 | Release 附件 |
 | --- | --- | --- |

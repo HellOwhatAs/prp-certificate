@@ -2,19 +2,22 @@
 use image::{DynamicImage, RgbImage};
 use qrcode::{Color, EcLevel, QrCode};
 pub const WIDTH: u32 = 1600;
-pub const HEIGHT: u32 = 1280;
+pub const HEIGHT: u32 = 2400;
 pub const PAPER: [u8; 3] = [250, 249, 245];
 pub fn paint(payload: &[u8]) -> Result<Vec<u8>, String> {
-    if payload.len() > flight_format::MAX_PAYLOAD {
+    if payload.len() > flight_format::MAX_BUNDLE_PAYLOAD {
         return Err("证书载荷过大".into());
     }
     let code =
         QrCode::with_error_correction_level(payload, EcLevel::M).map_err(|e| e.to_string())?;
     let n = code.width();
-    let scale = 4;
+    let scale = (440 / (n + 8)).min(6);
+    if scale < 3 {
+        return Err("证书二维码尺寸过大".into());
+    }
     let edge = (n + 8) * scale;
     let left = (WIDTH as usize - edge) / 2;
-    let top = 850;
+    let top = 1848;
     let mut p = PAPER.repeat(WIDTH as usize * HEIGHT as usize);
     for y in 0..n {
         for x in 0..n {
@@ -47,8 +50,8 @@ pub fn read(img: &RgbImage) -> Result<Vec<u8>, String> {
         let mut prepared = rqrr::PreparedImage::prepare(source);
         for grid in prepared.detect_grids() {
             let mut bytes = Vec::new();
-            if grid.decode_to(&mut bytes).is_ok() && bytes.starts_with(b"PRG1") {
-                flight_format::unpack(&bytes)?;
+            if grid.decode_to(&mut bytes).is_ok() && bytes.starts_with(b"PRG2") {
+                flight_format::unpack_set(&bytes)?;
                 if found.as_ref().is_some_and(|previous| *previous != bytes) {
                     return Err("图片中包含多份证书，请分别导入".into());
                 }

@@ -22,8 +22,8 @@ for(const path of process.argv.slice(2)){
  assert.deepEqual(JSON.parse(codec.parse_certificate_file(png)),original.certificate);
  await globalThis.onmessage({data:{action:'import',file:Buffer.from(png).toString('base64')}});
  assert.equal(result.type,'result',JSON.stringify(result));assert.deepEqual(result.result.scores,original.scores);
- const forged=structuredClone(original.certificate);forged.scores[0]+=1;
- const forgedImage=codec.certificate_png(JSON.stringify({...original,certificate:forged,scores:[forged.scores]}));
+ const forged=structuredClone(original.certificate);forged.certificates[0].scores[0]+=1;
+ const forgedImage=codec.certificate_png(JSON.stringify({...original,certificate:forged,scores:forged.certificates.map(c=>c.scores)}));
  await globalThis.onmessage({data:{action:'import',file:Buffer.from(forgedImage).toString('base64')}});
  assert.equal(result.type,'error');
  console.log(`${path}: published Worker verifies; Groth16 QR PNG import passes; image containing a forged score proof is rejected`);

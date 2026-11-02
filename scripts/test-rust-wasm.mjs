@@ -17,7 +17,7 @@ await fs.writeFile(`.cache/groth16/wasm-q${q}-${action}.json`,JSON.stringify(res
 if(action==='prove'){
  const again=JSON.parse(wasm.execute(JSON.stringify({action:'verify',certificate:result.certificate}),new Uint8Array(),new Uint8Array(),()=>{}));
  if(JSON.stringify(again.scores)!==JSON.stringify(result.scores))throw Error('roundtrip mismatch');
- const changed=structuredClone(result.certificate);changed.metadata.team='篡改队名';
+ const changed=structuredClone(result.certificate);changed.certificates[0].metadata.team='篡改队名';
  let rejected=false;try{wasm.execute(JSON.stringify({action:'verify',certificate:changed}),new Uint8Array(),new Uint8Array(),()=>{});}catch{rejected=true;}
  if(!rejected)throw Error('tampered metadata accepted');
  console.log('WASM proof, roundtrip and tamper checks passed');

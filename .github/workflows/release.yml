@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing version tag, for example v0.3.0'
+        description: 'Existing version tag, for example v0.4.1'
         required: true
         type: string
 permissions:
@@ -32,7 +32,7 @@ jobs:
           import os, re, subprocess
           tag=os.environ['RELEASE_TAG']
           if not re.fullmatch(r'v[0-9][A-Za-z0-9._-]*',tag):
-              raise SystemExit('Expected a version tag such as v0.3.0')
+              raise SystemExit('Expected a version tag such as v0.4.1')
           sha=subprocess.check_output(['git','rev-parse','--verify',f'refs/tags/{tag}^{{commit}}'],text=True).strip()
           head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           if head != sha:

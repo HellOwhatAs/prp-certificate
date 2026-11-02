@@ -16,14 +16,15 @@ fn deliver(queue: &FileQueue, ctx: &egui::Context, event: FileEvent) {
     queue.lock().unwrap().push(event);
     ctx.request_repaint();
 }
+#[cfg(not(target_arch = "wasm32"))]
 pub fn pick(slot: usize, queue: FileQueue, ctx: egui::Context) {
     let task = async move {
-        let dialog = if slot == 4 {
+        let dialog = if slot == 6 {
             rfd::AsyncFileDialog::new().add_filter("证书", &["png", "jpg", "jpeg"])
         } else {
             rfd::AsyncFileDialog::new().add_filter("CSV", &["csv"])
         };
-        if slot == 4 {
+        if slot == 6 {
             if let Some(files) = dialog.pick_files().await {
                 if files.len() > 20 {
                     deliver(
@@ -59,6 +60,7 @@ pub fn pick(slot: usize, queue: FileQueue, ctx: egui::Context) {
     };
     spawn(task);
 }
+#[cfg(not(target_arch = "wasm32"))]
 pub fn save(name: String, bytes: Vec<u8>, queue: FileQueue, ctx: egui::Context) {
     spawn(async move {
         if let Some(f) = rfd::AsyncFileDialog::new()
@@ -73,6 +75,60 @@ pub fn save(name: String, bytes: Vec<u8>, queue: FileQueue, ctx: egui::Context) 
         }
     });
 }
+#[cfg(target_arch = "wasm32")]
+mod browser_files {
+    use super::*;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use wasm_bindgen::prelude::*;
+    #[wasm_bindgen(js_namespace = flightBridge)]
+    extern "C" {
+        #[wasm_bindgen(catch, js_name = chooseFiles)]
+        async fn choose_files(slot: u32) -> Result<JsValue, JsValue>;
+        #[wasm_bindgen(catch, js_name = downloadFile)]
+        fn download_file(name: &str, bytes: &[u8]) -> Result<(), JsValue>;
+    }
+    pub fn pick(slot: usize, queue: FileQueue, ctx: egui::Context) {
+        spawn(async move {
+            let result = async {
+                let value = choose_files(slot as u32)
+                    .await
+                    .map_err(|e| e.as_string().unwrap_or_else(|| "文件读取失败".into()))?;
+                let files: Vec<Value> =
+                    serde_json::from_str(&value.as_string().ok_or("文件读取失败")?)
+                        .map_err(|e| e.to_string())?;
+                for file in files {
+                    let bytes = STANDARD
+                        .decode(file["data"].as_str().ok_or("文件读取失败")?)
+                        .map_err(|e| e.to_string())?;
+                    deliver(
+                        &queue,
+                        &ctx,
+                        FileEvent::Loaded {
+                            slot,
+                            name: file["name"].as_str().ok_or("文件名无效")?.into(),
+                            bytes,
+                        },
+                    );
+                }
+                Ok::<(), String>(())
+            }
+            .await;
+            if let Err(e) = result {
+                deliver(&queue, &ctx, FileEvent::Error(e));
+            }
+        });
+    }
+    pub fn save(name: String, bytes: Vec<u8>, queue: FileQueue, ctx: egui::Context) {
+        let event = match download_file(&name, &bytes) {
+            Ok(()) => FileEvent::Saved(name),
+            Err(e) => FileEvent::Error(format!("下载失败：{e:?}")),
+        };
+        deliver(&queue, &ctx, event);
+    }
+}
+#[cfg(target_arch = "wasm32")]
+pub use browser_files::{pick, save};
+
 #[cfg(target_arch = "wasm32")]
 fn spawn(f: impl std::future::Future<Output = ()> + 'static) {
     wasm_bindgen_futures::spawn_local(f);

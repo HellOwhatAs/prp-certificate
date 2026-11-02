@@ -6,7 +6,7 @@ globalThis.postMessage=m=>{if(m.type!=='progress')result=m;};globalThis.onmessag
 globalThis.fetch=async url=>new Response(await fs.readFile(new URL(url)),{headers:{'content-type':String(url).endsWith('.wasm')?'application/wasm':'application/octet-stream'}});
 await import('../dist/client/zk-worker.js');
 const expected=JSON.parse(await fs.readFile(process.argv[2]));
-const cases=[['original.png',true],['jpeg80.jpg',true],['resize-1280-jpeg80.jpg',true],['resize-1200-jpeg80.jpg',true],['resize-800-jpeg80.jpg',true],['resize-640-jpeg80.jpg',false],['changed-text.png',true],['removed-qr.png',false],['grayscale.png',true],['rotated.png',true],['cropped.png',true],['qr-only.png',true]];
+const cases=JSON.parse(await fs.readFile('.cache/groth16-images/results.json')).filter(c=>c.case!=='pdf-rejected').map(c=>[c.case+(c.case.includes('jpeg')?'.jpg':'.png'),c.recovered]);
 for(const [name,ok] of cases){
  const start=performance.now();const bytes=await fs.readFile(`.cache/groth16-images/${name}`);
  await globalThis.onmessage({data:{action:'import',file:bytes.toString('base64')}});

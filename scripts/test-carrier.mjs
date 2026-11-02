@@ -8,12 +8,13 @@ run(process.env.CARGO||'cargo',['build','-p','flight-ui','--locked','--target','
 run(process.env.WASM_BINDGEN||'wasm-bindgen',['--target','nodejs','--out-dir','.cache/carrier-codec','--out-name','flight_ui','target/wasm32-unknown-unknown/release/flight_ui.wasm']);
 fs.writeFileSync('.cache/carrier-codec/package.json','{"type":"commonjs"}');
 const require=createRequire(import.meta.url),codec=require('../.cache/carrier-codec/flight_ui.js');
-for(let q=1;q<=3;q++){
- const item=fs.readFileSync(`.cache/carrier-vectors/q${q}.json`,'utf8');
- const png=fs.readFileSync(`.cache/carrier-vectors/q${q}.png`);
+for(const name of [...[1,2,3].map(q=>`q${q}`),...[1,2,3,4,5,6,7].map(mask=>`set-${mask}`),'long']){
+ const item=fs.readFileSync(`.cache/carrier-vectors/${name}.json`,'utf8');
+ const png=fs.readFileSync(`.cache/carrier-vectors/${name}.png`);
  assert.deepEqual(Buffer.from(codec.certificate_png(item)),png);
- assert.deepEqual(JSON.parse(codec.parse_certificate_file(png)),JSON.parse(item).certificate);
- console.log(`Q${q}: Groth16 QR PNG native/WASM byte-identical; complete payload recovered`);
+ const c=JSON.parse(item).certificate;
+ assert.deepEqual(JSON.parse(codec.parse_certificate_file(png)),c);
+ console.log(`${name}: native/WASM PNG byte-identical; complete payload recovered`);
 }
 assert.throws(()=>codec.parse_certificate_file(new TextEncoder().encode('%PDF-1.7')));
 assert.equal(codec.certificate_pdf,undefined);assert.equal(codec.check_certificate_pdf,undefined);
