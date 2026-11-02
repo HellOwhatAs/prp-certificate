@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing version tag, for example v0.4.1'
+        description: 'Existing version tag, for example v0.4.4'
         required: true
         type: string
 permissions:
@@ -32,7 +32,7 @@ jobs:
           import os, re, subprocess
           tag=os.environ['RELEASE_TAG']
           if not re.fullmatch(r'v[0-9][A-Za-z0-9._-]*',tag):
-              raise SystemExit('Expected a version tag such as v0.4.1')
+              raise SystemExit('Expected a version tag such as v0.4.4')
           sha=subprocess.check_output(['git','rev-parse','--verify',f'refs/tags/{tag}^{{commit}}'],text=True).strip()
           head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           if head != sha:
@@ -42,6 +42,9 @@ jobs:
           PY
   desktop:
     needs: resolve
+    env:
+      FLIGHT_PARAMETER_REPOSITORY: ${{ github.repository }}
+      FLIGHT_PARAMETER_REF: ${{ needs.resolve.outputs.sha }}
     strategy:
       fail-fast: false
       matrix:
@@ -158,7 +161,8 @@ jobs:
           海上油田人员直升机运载计划编排：Windows、macOS、Linux 的 x64 / ARM64 桌面程序。
 
           - 下载对应系统的程序包并解压；验证证书不需要大参数。
-          - 生成第 N 问证书：将 prp-flight-parameters-qN.zip 内的 public 文件夹合并到 flight-ui 可执行文件所在目录。三问参数跨平台通用，可按需下载。
+          - 首次生成某一问时，程序自动从 GitHub 下载对应证明参数并缓存；后续复用缓存，下载中断后可重试。
+          - 离线使用时，可将 prp-flight-parameters-qN.zip 内的 public 文件夹合并到程序目录。三问参数跨平台通用。
           - prp-certificate-source.zip 包含源码与部署说明；参数由三个独立参数包提供。
           - prp-certificate-pages.zip 是静态网站文件；公开参数地址固定到本次发布提交。
           - SHA256SUMS.txt 提供所有附件的 SHA-256。程序未作 Windows / Apple 开发者签名。

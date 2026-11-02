@@ -1,18 +1,18 @@
 # 手动部署到 GitHub
 
-目标仓库：<https://github.com/HellOwhatAs/prp-certificate>。本包未向远端推送任何文件，也未替你开启 Pages 或发布 Release。
+目标仓库：[https://github.com/HellOwhatAs/prp-certificate](https://github.com/HellOwhatAs/prp-certificate)。本包未向远端推送任何文件，也未替你开启 Pages 或发布 Release。
 
 本版使用三合一 PNG（PRG2），不读取旧证书或迁移旧记录。已有三个参数包保持不变，可以直接复用。
 
 ## 1. 下载并合并
 
-| 下载文件 | 内容 | 是否需要 |
-| --- | --- | --- |
-| `prp-certificate-source.zip` | Rust 源码、预编译 WASM、题目 PDF、数据、模板、GitHub 工作流和本说明 | 必需 |
-| `prp-flight-parameters-q1.zip` | 第一问公开证明参数，约 229 MB | 完整部署必需 |
-| `prp-flight-parameters-q2.zip` | 第二问公开证明参数，约 428 MB | 完整部署必需 |
-| `prp-flight-parameters-q3.zip` | 第三问公开证明参数，约 456 MB | 完整部署必需 |
-| `prp-certificate-pages.zip` | 已构建的纯静态网页，便于单独留档或静态托管 | 可选；Actions 会自行生成 |
+| 下载文件                           | 内容                                           | 是否需要             |
+| ------------------------------ | -------------------------------------------- | ---------------- |
+| `prp-certificate-source.zip`   | Rust 源码、预编译 WASM、题目 PDF、数据、模板、GitHub 工作流和本说明 | 必需               |
+| `prp-flight-parameters-q1.zip` | 第一问公开证明参数，约 229 MB                           | 完整部署必需           |
+| `prp-flight-parameters-q2.zip` | 第二问公开证明参数，约 428 MB                           | 完整部署必需           |
+| `prp-flight-parameters-q3.zip` | 第三问公开证明参数，约 456 MB                           | 完整部署必需           |
+| `prp-certificate-pages.zip`    | 已构建的纯静态网页，便于单独留档或静态托管                        | 可选；Actions 会自行生成 |
 
 源码 ZIP 中有一个 `prp-certificate/` 目录。三个参数 ZIP 的顶层都是 `public/`，将它们解压到源码项目根目录并合并文件夹。正确结果是 `prp-certificate/public/groth16/q1-0.dat` 等 267 个 `.dat` 文件，与 `Cargo.toml` 同属一个项目。
 
@@ -20,7 +20,7 @@
 
 ## 2. 上传到已有仓库
 
-将仓库设为 **Public**。这个配置需要浏览器匿名访问公开参数。安装 Git 后，先克隆已有仓库，避免覆盖已有历史或出现 unrelated histories：
+将仓库设为 **Public**。这个配置需要浏览器和桌面程序匿名访问公开参数。安装 Git 后，先克隆已有仓库，避免覆盖已有历史或出现 unrelated histories：
 
 ```sh
 git clone https://github.com/HellOwhatAs/prp-certificate.git prp-certificate-github
@@ -62,7 +62,7 @@ python scripts/test-parameter-integrity.py
 1. 打开仓库 **Settings → Pages**。
 2. 在 **Build and deployment → Source** 选择 **GitHub Actions**。
 3. 打开 **Actions → Deploy GitHub Pages → Run workflow**，选择 `main` 运行。如果首次推送已成功触发，无需重复运行。
-4. 等 `build` 和 `deploy` 都成功，访问 <https://HellOwhatAs.github.io/prp-certificate/>。
+4. 等 `build` 和 `deploy` 都成功，访问 [https://HellOwhatAs.github.io/prp-certificate/](https://HellOwhatAs.github.io/prp-certificate/)。
 
 若 GitHub 提示工作流被禁用，在仓库 Actions 页启用工作流；不需要创建 PAT、仓库 Secret、Cloudflare 账号或 R2 存储。若首次运行早于 Pages 设置而失败，完成设置后重新运行即可。
 
@@ -75,28 +75,30 @@ python scripts/test-parameter-integrity.py
 代码和三个参数包全部上传后，创建一个新版本标签：
 
 ```sh
-git tag v0.4.1
-git push origin v0.4.1
+git tag v0.4.4
+git push origin v0.4.4
 ```
 
-这会触发 **Actions → Build and publish Release**。以后使用新的版本号，例如 `v0.4.2`；不要覆盖旧标签。
+这会触发 **Actions → Build and publish Release**。以后使用新的版本号，例如 `v0.4.5`；不要覆盖旧标签。
 
-也可在 Actions 手动运行：在 `tag` 输入框填写一个**已经推送到仓库**的标签，例如 `v0.4.1`。工作流会核对标签并让所有构建使用同一提交。
+也可在 Actions 手动运行：在 `tag` 输入框填写一个**已经推送到仓库**的标签，例如 `v0.4.4`。工作流会核对标签并让所有构建使用同一提交。
 
-| 系统 | 架构 | Release 附件 |
-| --- | --- | --- |
-| Windows | x64 | `prp-flight-windows-x64.zip` |
-| Windows | ARM64 | `prp-flight-windows-arm64.zip` |
-| macOS | Intel x64 | `prp-flight-macos-x64.tar.gz` |
-| macOS | Apple Silicon ARM64 | `prp-flight-macos-arm64.tar.gz` |
-| Linux | x64 | `prp-flight-linux-x64.tar.gz` |
-| Linux | ARM64 | `prp-flight-linux-arm64.tar.gz` |
+| 系统      | 架构                  | Release 附件                      |
+| ------- | ------------------- | ------------------------------- |
+| Windows | x64                 | `prp-flight-windows-x64.zip`    |
+| Windows | ARM64               | `prp-flight-windows-arm64.zip`  |
+| macOS   | Intel x64           | `prp-flight-macos-x64.tar.gz`   |
+| macOS   | Apple Silicon ARM64 | `prp-flight-macos-arm64.tar.gz` |
+| Linux   | x64                 | `prp-flight-linux-x64.tar.gz`   |
+| Linux   | ARM64               | `prp-flight-linux-arm64.tar.gz` |
 
 还会上传三问参数 ZIP、源码 ZIP、Pages ZIP 和 `SHA256SUMS.txt`，共 12 个附件。所有构建和测试成功后才会发布；上传附件期间先保留为草稿，上传成功后转为正式 Release。失败时不会发布一个新建的半成品 Release；修复后可重新运行失败工作流。
 
 原生程序来自 Rust 编译；Pages 使用源码包内经过哈希检查的预编译 WASM。六个平台配置已经提供，远程编译结果需以你上传后 GitHub Actions 的实际运行状态为准。
 
-普通使用者只需下载对应系统的桌面程序。验证证书无需额外参数；生成第 N 问证书时，把对应参数 ZIP 中的 `public/` 合并到程序所在目录即可。三问参数可同时放入同一目录。
+普通使用者只需下载对应系统的桌面程序。首次生成某一问时自动从 GitHub 下载对应参数并缓存，以后复用缓存；仅校验和验证证书无需下载参数。下载地址固定到该 Release 的提交 SHA。
+
+三个参数 ZIP 保留为离线使用方式：把对应包中的 `public/` 合并到程序所在目录即可。已有本地参数继续有效。参数未变时，无须为更新程序重新下载三个包；缓存位置和自定义配置见 README.md。
 
 ## 5. 后续修改
 
@@ -113,8 +115,8 @@ npm run build:rust
 
 ## 6. 常见问题
 
-- **缺少 qN-*.dat / 参数哈希检查失败**：三个参数 ZIP 没有完整合并，或被 Git LFS 指针替代；检查 `public/groth16/`。
-- **网页能开但无法生成证书**：确认仓库公开、参数全部上传，且用户网络能访问 `raw.githubusercontent.com`。无须向页面增加参数管理按钮。
+- **缺少 qN-\*.dat / 参数哈希检查失败**：三个参数 ZIP 没有完整合并，或被 Git LFS 指针替代；检查 `public/groth16/`。
+- **网页能开但无法生成证书**：确认仓库公开、参数全部上传，且用户网络能访问 `raw.githubusercontent.com`；桌面端的自动下载也使用同一地址。无须向页面增加参数管理按钮。
 - **网页编译文件与源码不匹配**：按第 5 节重新构建；Windows 保留 `.gitattributes`，避免 CRLF 转换破坏源文件哈希。
 - **Pages 404 或 configure-pages 失败**：先在 Settings → Pages 选择 GitHub Actions，再重新运行。部署后以 Actions 给出的地址为准。
 - **Release 没出现**：`main` 推送只部署 Pages；发布 Release 需要推送 `v*` 标签或手动选择已有标签。查看是否有某个平台失败，`publish` 会等全部成功。

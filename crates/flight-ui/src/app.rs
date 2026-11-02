@@ -6,9 +6,9 @@ use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-const ACCENT: Color32 = Color32::from_rgb(40, 83, 66);
-const INK: Color32 = Color32::from_rgb(37, 43, 39);
-const MUTED: Color32 = Color32::from_rgb(113, 119, 113);
+const ACCENT: Color32 = Color32::from_rgb(27, 118, 106);
+const INK: Color32 = Color32::from_rgb(29, 54, 59);
+const MUTED: Color32 = Color32::from_rgb(98, 119, 119);
 const RED: Color32 = Color32::from_rgb(166, 54, 47);
 const NAMES: [&str; 3] = [
     "第一问 · 出海运输",
@@ -79,10 +79,14 @@ struct Batch {
     checks: VecDeque<usize>,
     proofs: VecDeque<usize>,
 }
-struct Verification {
+struct Review {
+    name: Option<String>,
+    item: Verified,
+    texture: egui::TextureHandle,
+}
+struct ImportFailure {
     name: String,
-    item: Option<Verified>,
-    error: String,
+    message: String,
 }
 
 pub struct FlightApp {
@@ -100,10 +104,9 @@ pub struct FlightApp {
     error: bool,
     records: Vec<Verified>,
     pending: VecDeque<Pending>,
-    verifications: Vec<Verification>,
     draft_texture: Option<egui::TextureHandle>,
-    review_texture: Option<egui::TextureHandle>,
-    review: Option<Verified>,
+    review: Option<Review>,
+    import_failures: Vec<ImportFailure>,
     ready: Option<Verified>,
     dirty: bool,
     confirm_clear: bool,
@@ -131,14 +134,21 @@ impl FlightApp {
         let mut style = (*cc.egui_ctx.style()).clone();
         style.visuals = egui::Visuals::light();
         style.visuals.override_text_color = Some(INK);
-        style.visuals.panel_fill = Color32::from_rgb(244, 245, 241);
+        style.visuals.panel_fill = Color32::from_rgb(245, 248, 247);
         style.visuals.window_fill = Color32::WHITE;
-        style.visuals.text_edit_bg_color = Some(Color32::from_rgb(247, 248, 245));
-        style.visuals.selection.bg_fill = Color32::from_rgb(224, 233, 225);
+        style.visuals.text_edit_bg_color = Some(Color32::from_rgb(241, 247, 244));
+        style.visuals.selection.bg_fill = Color32::from_rgb(211, 233, 226);
         style.visuals.selection.stroke = egui::Stroke::new(1.0_f32, ACCENT);
-        style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(238, 241, 235);
-        style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(238, 241, 235);
-        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(224, 233, 225);
+        style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(234, 240, 237);
+        style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(234, 240, 237);
+        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(211, 233, 226);
+        style.visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(211, 233, 226);
+        style.visuals.widgets.active.weak_bg_fill = Color32::from_rgb(190, 219, 208);
+        style.visuals.widgets.inactive.bg_stroke =
+            egui::Stroke::new(1.0_f32, Color32::from_rgb(195, 213, 205));
+        style.visuals.widgets.hovered.bg_stroke =
+            egui::Stroke::new(1.0_f32, Color32::from_rgb(96, 156, 142));
+        style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0_f32, ACCENT);
         style.spacing.item_spacing = egui::vec2(12.0, 12.0);
         style.spacing.button_padding = egui::vec2(14.0, 9.0);
         style
@@ -182,10 +192,9 @@ impl FlightApp {
             error: false,
             records: vec![],
             pending,
-            verifications: vec![],
             draft_texture: None,
-            review_texture: None,
             review: None,
+            import_failures: vec![],
             ready: None,
             dirty: true,
             confirm_clear: false,
@@ -341,6 +350,9 @@ impl FlightApp {
             return;
         }
         if let Some(p) = self.pending.pop_front() {
+            if !p.stored {
+                self.review = None;
+            }
             let payload = if p.imported.certificate.is_null() {
                 json!({"action":"import", "file": STANDARD.encode(p.imported.original.as_deref().unwrap_or_default())})
             } else {
@@ -402,22 +414,43 @@ impl FlightApp {
         self.draft_texture = Some(Self::texture(ctx, "draft", &pixels));
         self.dirty = false;
     }
-    fn set_review(&mut self, item: Verified, ctx: &egui::Context) {
+    fn set_review(&mut self, item: Verified, name: Option<String>, ctx: &egui::Context) {
         match certificate::render(&item) {
             Ok(p) => {
-                self.review_texture = Some(Self::texture(ctx, "review", &p));
-                self.review = Some(item);
+                if name.is_none() {
+                    self.import_failures.clear();
+                }
+                self.review = Some(Review {
+                    name,
+                    item,
+                    texture: Self::texture(ctx, "review", &p),
+                });
+                self.status.clear();
+                self.error = false;
             }
-            Err(e) => self.show_error(e),
+            Err(e) => self.set_review_error(name.unwrap_or_default(), e),
         }
+    }
+    fn set_review_error(&mut self, name: String, message: String) {
+        self.show_error(message.clone());
+        self.review = None;
+        self.import_failures
+            .insert(0, ImportFailure { name, message });
+        self.import_failures.truncate(20);
     }
     fn receive(&mut self, ctx: &egui::Context) {
         let files = std::mem::take(&mut *self.file_events.lock().unwrap());
+        if files
+            .iter()
+            .any(|event| matches!(event, FileEvent::Loaded { slot: 6, .. }))
+        {
+            self.import_failures.clear();
+        }
         for event in files {
             match event {
                 FileEvent::Loaded { slot, name, bytes } if slot == 6 => {
                     if bytes.len() > 16_000_000 {
-                        self.show_error("证书图片不能超过 16 MB");
+                        self.set_review_error(name, "证书图片不能超过 16 MB".into());
                     } else {
                         self.pending.push_back(Pending {
                             imported: Imported {
@@ -487,14 +520,7 @@ impl FlightApp {
                             }
                             Kind::Import => {
                                 if let Some(p) = task.import {
-                                    self.verifications.insert(
-                                        0,
-                                        Verification {
-                                            name: p.name,
-                                            item: None,
-                                            error: error.clone(),
-                                        },
-                                    );
+                                    self.set_review_error(p.name, error.clone());
                                 }
                                 self.show_error(error);
                             }
@@ -582,29 +608,13 @@ impl FlightApp {
                                 Ok(item) => {
                                     self.add_record(item.clone());
                                     if !p.stored {
-                                        self.set_review(item.clone(), ctx);
-                                        self.verifications.insert(
-                                            0,
-                                            Verification {
-                                                name: p.name,
-                                                item: Some(item),
-                                                error: String::new(),
-                                            },
-                                        );
+                                        self.set_review(item, Some(p.name), ctx);
                                         self.status = "验证通过".into();
                                         self.error = false;
                                     }
                                 }
                                 Err(e) => {
-                                    self.verifications.insert(
-                                        0,
-                                        Verification {
-                                            name: p.name,
-                                            item: None,
-                                            error: e.clone(),
-                                        },
-                                    );
-                                    self.show_error(e);
+                                    self.set_review_error(p.name, e);
                                 }
                             }
                         }
@@ -615,7 +625,6 @@ impl FlightApp {
                 _ => {}
             }
         }
-        self.verifications.truncate(20);
         self.next_import();
         self.refresh_draft(ctx);
     }
@@ -638,16 +647,17 @@ impl FlightApp {
             Err(e) => self.show_error(e),
         }
     }
-    fn section(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
+    fn section(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) -> egui::Response {
         egui::Frame::new()
             .fill(Color32::WHITE)
-            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(222, 226, 218)))
+            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(207, 221, 215)))
             .corner_radius(8)
             .inner_margin(20)
             .show(ui, |ui| {
                 ui.set_min_width((ui.available_width() - 2.0).max(0.0));
                 body(ui);
-            });
+            })
+            .response
     }
     fn template(&mut self, q: usize, assignment: bool, ctx: &egui::Context) {
         let table = match (q, assignment) {
@@ -688,68 +698,78 @@ impl FlightApp {
                     "未提交"
                 };
                 ui.label(RichText::new(state).size(13.0).color(MUTED));
-                let can_clear = question.active() && !self.busy();
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_enabled(
-                            can_clear,
-                            egui::Button::new(RichText::new("清空").size(14.0).color(MUTED))
-                                .frame(false)
-                                .small(),
-                        )
-                        .clicked()
-                    {
-                        self.questions[q] = Question::default();
-                        self.invalidate_generated();
-                    }
-                });
             });
-            if ui.available_width() >= 400.0 {
-                ui.columns(2, |columns| {
-                    self.file_button(&mut columns[0], q, 0, "航线表");
-                    self.file_button(&mut columns[1], q, 1, "人员分配表");
-                });
-            } else {
-                self.file_button(ui, q, 0, "航线表");
-                self.file_button(ui, q, 1, "人员分配表");
-            }
-            ui.horizontal(|ui| {
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new("航线模板").size(13.0).color(MUTED))
-                            .small()
-                            .frame(false),
-                    )
-                    .clicked()
-                {
-                    self.template(q, false, ui.ctx());
+            self.file_button(ui, q, 0, "航线表");
+            self.file_button(ui, q, 1, "人员分配表");
+            ui.scope(|ui| {
+                ui.spacing_mut().button_padding = egui::vec2(10.0, 8.0);
+                if ui.available_width() >= 364.0 {
+                    ui.horizontal(|ui| {
+                        self.template_buttons(ui, q);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            self.question_buttons(ui, q);
+                        });
+                    });
+                } else {
+                    ui.horizontal(|ui| self.template_buttons(ui, q));
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            self.question_buttons(ui, q);
+                        });
+                    });
                 }
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new("人员分配模板").size(13.0).color(MUTED))
-                            .small()
-                            .frame(false),
-                    )
-                    .clicked()
-                {
-                    self.template(q, true, ui.ctx());
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_enabled(
-                            self.questions[q].has_files() && !self.busy(),
-                            egui::Button::new("仅校验").min_size(egui::vec2(84.0, 34.0)),
-                        )
-                        .clicked()
-                    {
-                        self.check_question(q);
-                    }
-                });
             });
             if !self.questions[q].error.is_empty() {
                 ui.colored_label(RED, &self.questions[q].error);
             }
         });
+    }
+    fn template_buttons(&mut self, ui: &mut egui::Ui, q: usize) {
+        for (label, assignment, width) in [("航线模板", false, 80.0), ("人员分配模板", true, 108.0)]
+        {
+            if ui
+                .add_sized(
+                    [width, 36.0],
+                    egui::Button::new(RichText::new(label).size(14.0)).corner_radius(5),
+                )
+                .clicked()
+            {
+                self.template(q, assignment, ui.ctx());
+            }
+        }
+    }
+    fn question_buttons(&mut self, ui: &mut egui::Ui, q: usize) {
+        // Right-to-left layout keeps the primary check button at the right edge.
+        let check = ui
+            .add_enabled_ui(self.questions[q].has_files() && !self.busy(), |ui| {
+                let visuals = ui.visuals_mut();
+                visuals.widgets.inactive.weak_bg_fill = ACCENT;
+                visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(23, 133, 119);
+                visuals.widgets.active.weak_bg_fill = Color32::from_rgb(19, 94, 84);
+                ui.add_sized(
+                    [64.0, 36.0],
+                    egui::Button::new(RichText::new("校验").size(14.0).color(Color32::WHITE))
+                        .corner_radius(5),
+                )
+                .clicked()
+            })
+            .inner;
+        if check {
+            self.check_question(q);
+        }
+        let clear = ui
+            .add_enabled_ui(self.questions[q].active() && !self.busy(), |ui| {
+                ui.add_sized(
+                    [64.0, 36.0],
+                    egui::Button::new(RichText::new("清空").size(14.0)).corner_radius(5),
+                )
+                .clicked()
+            })
+            .inner;
+        if clear {
+            self.questions[q] = Question::default();
+            self.invalidate_generated();
+        }
     }
     fn file_button(&mut self, ui: &mut egui::Ui, q: usize, slot: usize, label: &str) {
         ui.label(RichText::new(label).size(14.0).color(MUTED));
@@ -763,8 +783,6 @@ impl FlightApp {
             .add_enabled(
                 !self.busy(),
                 egui::Button::new(RichText::new(label).size(14.0))
-                    .fill(Color32::from_rgb(247, 248, 245))
-                    .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(215, 222, 212)))
                     .corner_radius(5)
                     .wrap()
                     .min_size(egui::vec2(ui.available_width(), 40.0)),
@@ -831,33 +849,15 @@ impl FlightApp {
             }
         });
     }
-    fn picture(ui: &mut egui::Ui, texture: &Option<egui::TextureHandle>) {
+    fn picture(ui: &mut egui::Ui, texture: Option<&egui::TextureHandle>) {
         if let Some(texture) = texture {
             let width = ui.available_width();
             let height = width * certificate::HEIGHT as f32 / certificate::WIDTH as f32;
             ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(width, height)));
         }
     }
-    fn save_button(&mut self, ui: &mut egui::Ui, item: Option<Verified>) {
-        let clicked = ui
-            .add_enabled_ui(item.is_some() && !self.busy(), |ui| {
-                ui.add_sized(
-                    [ui.available_width(), 46.0],
-                    egui::Button::new(RichText::new("导出证书").color(Color32::WHITE))
-                        .fill(ACCENT)
-                        .corner_radius(6),
-                )
-                .clicked()
-            })
-            .inner;
-        if clicked {
-            if let Some(item) = item {
-                self.export(&item, ui.ctx());
-            }
-        }
-    }
     fn preview_panel(&mut self, ui: &mut egui::Ui) {
-        Self::picture(ui, &self.draft_texture);
+        Self::picture(ui, self.draft_texture.as_ref());
     }
     fn generate_page(&mut self, ui: &mut egui::Ui) {
         if ui.available_width() >= 900.0 {
@@ -876,42 +876,71 @@ impl FlightApp {
             self.preview_panel(ui);
         }
     }
-    fn verification_list(&mut self, ui: &mut egui::Ui) {
-        let mut selected = None;
-        for (i, v) in self.verifications.iter().enumerate() {
+    fn verification_details(&self, ui: &mut egui::Ui) {
+        if let Some(Review { name, item, .. }) = &self.review {
             Self::section(ui, |ui| {
-                ui.label(RichText::new(&v.name).strong());
-                if let Some(item) = &v.item {
-                    ui.label(item.team());
-                    for q in 1..=3 {
-                        ui.horizontal(|ui| {
-                            ui.label(format!("第 {q} 问"));
-                            if let Some(s) = item.score_for(q) {
-                                ui.colored_label(ACCENT, "验证通过");
-                                ui.label(format!("{} 分钟", fmt(s[0])));
-                            } else {
-                                ui.label(RichText::new("未提供").color(MUTED));
-                            }
-                        });
-                    }
-                    if ui.small_button("查看").clicked() {
-                        selected = Some(i);
-                    }
-                } else {
-                    ui.colored_label(RED, "验证失败");
-                    ui.label(&v.error);
+                ui.label(RichText::new(item.team()).size(20.0).strong());
+                ui.label(
+                    RichText::new(format!("证书编号  {}", &item.id()[..16]))
+                        .size(13.0)
+                        .color(MUTED),
+                );
+                if let Some(name) = name {
+                    ui.label(RichText::new(name).size(13.0).color(MUTED));
                 }
             });
+            for q in 1..=3 {
+                Self::section(ui, |ui| {
+                    let scores = item.score_for(q);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(NAMES[q - 1]).size(18.0).strong());
+                        ui.label(
+                            RichText::new(if scores.is_some() {
+                                "验证通过"
+                            } else {
+                                "未提供"
+                            })
+                            .size(13.0)
+                            .color(if scores.is_some() {
+                                ACCENT
+                            } else {
+                                MUTED
+                            }),
+                        );
+                    });
+                    if let Some(scores) = scores {
+                        ui.spacing_mut().item_spacing.y = 8.0;
+                        let font_size = if ui.available_width() < 280.0 {
+                            14.0
+                        } else {
+                            16.0
+                        };
+                        for (label, value) in certificate::score_metrics(q, scores) {
+                            ui.columns(2, |cols| {
+                                cols[0].label(RichText::new(label).size(font_size).color(MUTED));
+                                cols[1].with_layout(
+                                    egui::Layout::top_down(egui::Align::Max),
+                                    |ui| {
+                                        ui.label(RichText::new(value).size(font_size));
+                                    },
+                                );
+                            });
+                        }
+                    }
+                });
+            }
         }
-        if let Some(i) = selected {
-            self.set_review(self.verifications[i].item.clone().unwrap(), ui.ctx());
+        for failure in &self.import_failures {
+            Self::section(ui, |ui| {
+                ui.label(RichText::new(&failure.name).strong());
+                ui.colored_label(RED, "验证失败");
+                ui.label(&failure.message);
+            });
         }
     }
     fn review_panel(&mut self, ui: &mut egui::Ui) {
-        if self.review.is_some() {
-            self.save_button(ui, self.review.clone());
-            ui.add_space(2.0);
-            Self::picture(ui, &self.review_texture);
+        if let Some(Review { texture, .. }) = &self.review {
+            Self::picture(ui, Some(texture));
         }
     }
     fn verify_page(&mut self, ui: &mut egui::Ui) {
@@ -930,11 +959,11 @@ impl FlightApp {
         ui.add_space(8.0);
         if ui.available_width() >= 900.0 {
             ui.columns(2, |cols| {
-                self.verification_list(&mut cols[0]);
+                self.verification_details(&mut cols[0]);
                 self.review_panel(&mut cols[1]);
             });
         } else {
-            self.verification_list(ui);
+            self.verification_details(ui);
             self.review_panel(ui);
         }
     }
@@ -958,69 +987,208 @@ impl FlightApp {
             return;
         }
         let items = self.records.clone();
-        egui::ScrollArea::horizontal().show(ui, |ui| {
-            egui::Grid::new("records")
-                .spacing([24.0, 18.0])
-                .striped(true)
-                .min_col_width(80.0)
-                .show(ui, |ui| {
-                    for label in [
-                        "队伍",
-                        "第一问 / 分钟",
-                        "第二问 / 分钟",
-                        "第三问 / 分钟",
-                        "临时任务 / 人",
-                        "操作",
-                    ] {
-                        ui.strong(label);
-                    }
-                    ui.end_row();
-                    for item in items {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(200.0, 34.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.label(item.team());
-                            },
-                        );
-                        for q in 1..=3 {
-                            ui.label(item.score_for(q).map(|s| fmt(s[0])).unwrap_or_default());
+        if ui.available_width() >= 1020.0 {
+            let width = ui.available_width();
+            let flexible = width - 24.0 - 296.0 - 5.0 * 20.0;
+            let columns = [
+                flexible * 0.28,
+                flexible * 0.18,
+                flexible * 0.18,
+                flexible * 0.18,
+                flexible * 0.18,
+                296.0,
+            ];
+            let (header, _) = ui.allocate_exact_size(egui::vec2(width, 38.0), egui::Sense::hover());
+            let mut x = header.left() + 12.0;
+            for (label, w) in [
+                "队伍",
+                "第一问 / 分钟",
+                "第二问 / 分钟",
+                "第三问 / 分钟",
+                "临时任务 / 人",
+                "操作",
+            ]
+            .into_iter()
+            .zip(columns)
+            {
+                let text =
+                    ui.painter()
+                        .layout(label.into(), egui::FontId::proportional(16.0), MUTED, w);
+                ui.painter().galley(
+                    egui::pos2(x, header.center().y - text.size().y / 2.0),
+                    text,
+                    MUTED,
+                );
+                x += w + 20.0;
+            }
+            for item in items {
+                let labels = [
+                    item.team().to_owned(),
+                    item.score_for(1).map(|s| fmt(s[0])).unwrap_or_default(),
+                    item.score_for(2).map(|s| fmt(s[0])).unwrap_or_default(),
+                    item.score_for(3).map(|s| fmt(s[0])).unwrap_or_default(),
+                    item.score_for(3)
+                        .map(|s| format!("{} / 160", s[7]))
+                        .unwrap_or_default(),
+                ];
+                let text: Vec<_> = labels
+                    .into_iter()
+                    .zip(columns)
+                    .map(|(label, w)| {
+                        ui.painter()
+                            .layout(label, egui::FontId::proportional(16.0), INK, w)
+                    })
+                    .collect();
+                let height = text
+                    .iter()
+                    .map(|t| t.size().y + 24.0)
+                    .fold(64.0_f32, f32::max);
+                let (row, _) =
+                    ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+                ui.painter().rect_filled(row, 6, Color32::WHITE);
+                ui.painter().rect_stroke(
+                    row,
+                    6,
+                    egui::Stroke::new(1.0_f32, Color32::from_rgb(207, 221, 215)),
+                    egui::StrokeKind::Inside,
+                );
+                let mut x = row.left() + 12.0;
+                for (text, w) in text.into_iter().zip(columns) {
+                    let y = row.center().y - text.size().y / 2.0;
+                    ui.painter().galley(egui::pos2(x, y), text, INK);
+                    x += w + 20.0;
+                }
+                self.record_actions(
+                    ui,
+                    &item,
+                    egui::Rect::from_min_size(
+                        egui::pos2(x, row.center().y - 20.0),
+                        egui::vec2(296.0, 40.0),
+                    ),
+                );
+            }
+        } else {
+            for item in items {
+                Self::section(ui, |ui| {
+                    ui.label(RichText::new(item.team()).size(18.0).strong());
+                    ui.columns(2, |columns| {
+                        for (q, label) in [
+                            (1, "第一问 / 分钟"),
+                            (2, "第二问 / 分钟"),
+                            (3, "第三问 / 分钟"),
+                        ] {
+                            let column = &mut columns[(q - 1) % 2];
+                            column.label(RichText::new(label).size(13.0).color(MUTED));
+                            column.label(item.score_for(q).map(|s| fmt(s[0])).unwrap_or_default());
                         }
-                        ui.label(
+                        columns[1].label(RichText::new("临时任务 / 人").size(13.0).color(MUTED));
+                        columns[1].label(
                             item.score_for(3)
                                 .map(|s| format!("{} / 160", s[7]))
                                 .unwrap_or_default(),
                         );
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_sized([64.0, 34.0], egui::Button::new("查看"))
-                                .clicked()
-                            {
-                                self.set_review(item.clone(), ui.ctx());
-                                self.page = 1;
-                            }
-                            if ui
-                                .add_enabled_ui(!self.busy(), |ui| {
-                                    ui.add_sized([64.0, 34.0], egui::Button::new("更新"))
-                                        .clicked()
-                                })
-                                .inner
-                            {
-                                if let Err(e) = self.use_certificate(&item) {
-                                    self.show_error(e);
-                                }
-                            }
-                            if ui
-                                .add_sized([100.0, 34.0], egui::Button::new("导出证书"))
-                                .clicked()
-                            {
-                                self.export(&item, ui.ctx());
-                            }
-                        });
-                        ui.end_row();
-                    }
+                    });
+                    let width = ui.available_width();
+                    let (row, _) =
+                        ui.allocate_exact_size(egui::vec2(width, 40.0), egui::Sense::hover());
+                    let actions = egui::Rect::from_min_size(
+                        egui::pos2(row.right() - width.min(296.0), row.top()),
+                        egui::vec2(width.min(296.0), 40.0),
+                    );
+                    self.record_actions(ui, &item, actions);
                 });
-        });
+            }
+        }
+    }
+    fn record_actions(&mut self, ui: &mut egui::Ui, item: &Verified, area: egui::Rect) {
+        let gap = if area.width() >= 296.0 { 12.0 } else { 8.0 };
+        let widths = if area.width() >= 296.0 {
+            [80.0, 80.0, 112.0]
+        } else {
+            let unit = (area.width() - 2.0 * gap) / 4.0;
+            [unit, unit, unit * 2.0]
+        };
+        let mut x = area.left();
+        for (index, (label, width)) in ["查看", "更新", "导出证书"]
+            .into_iter()
+            .zip(widths)
+            .enumerate()
+        {
+            let rect =
+                egui::Rect::from_min_size(egui::pos2(x, area.top()), egui::vec2(width, 40.0));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(
+                egui::Layout::centered_and_justified(egui::Direction::TopDown),
+            ));
+            child.spacing_mut().button_padding = egui::vec2(8.0, 8.0);
+            let clicked = child
+                .add_enabled(
+                    index != 1 || !self.busy(),
+                    egui::Button::new(RichText::new(label).size(14.0))
+                        .corner_radius(5)
+                        .min_size(rect.size()),
+                )
+                .clicked();
+            if clicked {
+                match index {
+                    0 => {
+                        self.set_review(item.clone(), None, ui.ctx());
+                        self.page = 1;
+                        self.reset_scroll = true;
+                    }
+                    1 => {
+                        if let Err(e) = self.use_certificate(item) {
+                            self.show_error(e);
+                        }
+                    }
+                    _ => self.export(item, ui.ctx()),
+                }
+            }
+            x += width + gap;
+        }
+    }
+    fn navigation_buttons(&mut self, ui: &mut egui::Ui, width: f32) {
+        ui.spacing_mut().button_padding = egui::vec2(8.0, 8.0);
+        for (i, label) in ["生成证书", "验证证书", "证书记录"].iter().enumerate() {
+            if ui
+                .add_sized(
+                    [width, 44.0],
+                    egui::Button::selectable(self.page == i, *label),
+                )
+                .clicked()
+            {
+                self.page = i;
+            }
+        }
+    }
+    fn navigation(&mut self, ui: &mut egui::Ui) {
+        const TITLE: &str = "海上油田人员直升机运载计划编排";
+        let title = || RichText::new(TITLE).color(ACCENT).size(21.0).strong();
+        let title_width = ui
+            .painter()
+            .layout_no_wrap(TITLE.into(), egui::FontId::proportional(21.0), ACCENT)
+            .size()
+            .x;
+        let width = ui.available_width();
+        if width >= title_width + 32.0 + 3.0 * 96.0 + 24.0 {
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, 44.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(title());
+                    ui.add_space(20.0);
+                    self.navigation_buttons(ui, 96.0);
+                },
+            );
+        } else {
+            ui.label(title());
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, 44.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    self.navigation_buttons(ui, ((width - 24.0) / 3.0).min(120.0));
+                },
+            );
+        }
     }
 }
 impl eframe::App for FlightApp {
@@ -1037,32 +1205,38 @@ impl eframe::App for FlightApp {
                     .fill(Color32::WHITE)
                     .inner_margin(egui::Margin::symmetric(24, 18)),
             )
-            .show(ctx, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new("海上油田人员直升机运载计划编排")
-                            .size(21.0)
-                            .strong(),
-                    );
-                    ui.add_space(20.0);
-                    for (i, label) in ["生成证书", "验证证书", "证书记录"].iter().enumerate()
-                    {
-                        ui.selectable_value(&mut self.page, i, *label);
-                    }
-                });
-            });
+            .show(ctx, |ui| self.navigation(ui));
         if self.busy() || !self.status.is_empty() {
             egui::TopBottomPanel::bottom("status")
                 .frame(egui::Frame::new().fill(Color32::WHITE).inner_margin(14))
                 .show(ctx, |ui| {
                     if self.busy() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spinner();
-                            ui.label(&self.progress);
-                            if ui.button("取消").clicked() {
-                                self.cancel();
-                            }
-                        });
+                        // Reserve the complete row before placing its differently sized widgets.
+                        // Long progress messages yield space to the cancel button, never another row.
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), 40.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().button_padding = egui::vec2(14.0, 8.0);
+                                ui.add(egui::Spinner::new().size(18.0));
+                                let text_width =
+                                    (ui.available_width() - 72.0 - ui.spacing().item_spacing.x)
+                                        .max(0.0);
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(text_width, 40.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.add(egui::Label::new(&self.progress).truncate());
+                                    },
+                                );
+                                if ui
+                                    .add_sized([72.0, 40.0], egui::Button::new("取消"))
+                                    .clicked()
+                                {
+                                    self.cancel();
+                                }
+                            },
+                        );
                     } else {
                         ui.colored_label(if self.error { RED } else { ACCENT }, &self.status);
                     }
@@ -1071,7 +1245,7 @@ impl eframe::App for FlightApp {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::from_rgb(244, 245, 241))
+                    .fill(Color32::from_rgb(245, 248, 247))
                     .inner_margin(24),
             )
             .show(ctx, |ui| {
@@ -1097,9 +1271,8 @@ impl eframe::App for FlightApp {
                         if ui.button("清空").clicked() {
                             self.records.clear();
                             self.pending.clear();
-                            self.verifications.clear();
                             self.review = None;
-                            self.review_texture = None;
+                            self.import_failures.clear();
                             self.confirm_clear = false;
                         }
                         if ui.button("取消").clicked() {

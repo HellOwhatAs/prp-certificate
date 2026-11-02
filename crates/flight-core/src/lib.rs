@@ -1,6 +1,8 @@
 pub mod checker;
 mod engine;
 pub mod groth16;
+#[cfg(not(target_arch = "wasm32"))]
+mod native_parameters;
 mod parameters;
 pub use engine::{run_job, verify_certificate};
 
@@ -38,35 +40,9 @@ pub fn run_native_stdio() {
                 .as_u64()
                 .filter(|n| (1..=3).contains(n))
                 .ok_or("题号无效")?;
-            let mut candidates = vec![];
-            if let Some(p) = std::env::var_os("FLIGHT_HOME") {
-                candidates.push(std::path::PathBuf::from(p));
-            }
-            if let Ok(exe) = std::env::current_exe() {
-                if let Some(p) = exe.parent() {
-                    candidates.extend(p.ancestors().take(5).map(|p| p.to_owned()));
-                }
-            }
-            if let Ok(cwd) = std::env::current_dir() {
-                candidates.push(cwd);
-            }
-            let root = candidates
-                .into_iter()
-                .find(|p| p.join("public/groth16/manifest.json").is_file())
-                .ok_or("未找到公开证明参数，请使用完整发行包")?;
-            let info = &engine::manifest()["circuits"][q.to_string()];
-            g1.reserve(info["pk_bytes"].as_u64().ok_or("参数长度无效")? as usize);
-            for chunk in info["chunks"].as_array().ok_or("参数清单无效")? {
-                let bytes = std::fs::read(
-                    root.join("public/groth16")
-                        .join(chunk["file"].as_str().ok_or("参数文件无效")?),
-                )
-                .map_err(|_| format!("缺少问题 {q} 的公开参数，请将对应参数包解压到程序同目录"))?;
-                if bytes.len() as u64 != chunk["bytes"].as_u64().ok_or("参数长度无效")? {
-                    return Err("公开参数长度无效".into());
-                }
-                g1.extend(bytes);
-            }
+            g1 = native_parameters::read(q, &mut |message| {
+                emit(json!({"type":"progress","text":message}));
+            })?;
         }
         run_job(job, circuit, g1, |message| {
             emit(json!({"type":"progress","text":message}))
