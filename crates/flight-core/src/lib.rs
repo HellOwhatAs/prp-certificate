@@ -5,6 +5,8 @@ pub mod groth16;
 mod native_parameters;
 mod parameters;
 pub use engine::{run_job, verify_certificate};
+#[cfg(all(target_arch = "wasm32", feature = "web-threads"))]
+pub use wasm_bindgen_rayon::init_thread_pool;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_native_stdio() {

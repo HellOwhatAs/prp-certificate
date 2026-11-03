@@ -7,5 +7,5 @@ if(release.format!==1||JSON.stringify(release.sources)!==JSON.stringify(await so
 await fs.rm('dist',{recursive:true,force:true});
 await fs.mkdir('dist/client',{recursive:true});
 await fs.cp('public','dist/client',{recursive:true,filter:path=>!path.endsWith('.dat')&&!path.split('/').at(-1).startsWith('.')});
-for(const name of ['ui','engine','bridge.js','zk-worker.js','parameter-bundle.js','parameters.js'])await fs.cp(`web-dist/${name}`,`dist/client/${name}`,{recursive:true});
+for(const name of (await fs.readdir('web-dist')).filter(name=>name!=='release.json'))await fs.cp(`web-dist/${name}`,`dist/client/${name}`,{recursive:true});
 await fs.writeFile('dist/client/.nojekyll','');

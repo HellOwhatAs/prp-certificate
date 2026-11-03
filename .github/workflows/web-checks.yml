@@ -1,0 +1,27 @@
+name: Browser engine checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: node scripts/test-thread-policy.mjs
+      - run: node scripts/test-parameters.mjs
+      - name: Validate source and WASM hashes and build the site
+        run: npm run build
+      - run: node scripts/test-web-preflight.mjs
+      - run: npm install --no-save --package-lock=false playwright@1.62.1
+      - run: npx playwright install --with-deps chromium
+      - name: Test project-path isolation, threading and fallback in Chromium
+        run: node scripts/test-web-threads.mjs

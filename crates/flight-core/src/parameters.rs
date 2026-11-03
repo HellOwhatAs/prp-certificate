@@ -8,7 +8,7 @@ use ark_groth16::{ProvingKey, VerifyingKey};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
 use std::io::{Read, Take};
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "web-threads"))]
 use rayon::prelude::*;
 
 const BATCH_POINTS: usize = 32_768;
@@ -37,9 +37,9 @@ where
         let n = (count - result.len()).min(BATCH_POINTS);
         let bytes = &mut buffer[..n * size];
         reader.read_exact(bytes)?;
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "web-threads"))]
         let chunks = bytes.par_chunks_exact(size);
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", not(feature = "web-threads")))]
         let chunks = bytes.chunks_exact(size);
         let batch: Result<Vec<T>, _> = chunks.map(T::deserialize_compressed_unchecked).collect();
         result.extend(batch?);

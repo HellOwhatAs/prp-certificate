@@ -1,11 +1,12 @@
 import {readParameterBundle} from './parameter-bundle.js';
 import {readRemoteParameters} from './parameters.js';
-import init,{execute} from './engine/flight_core.js';
+import {loadEngine} from './engine-loader.js';
 const send=(type,data)=>postMessage({type,...data});
 onmessage=async ({data})=>{
+ if(data?.type?.startsWith('thread-'))return;
  try {
   send('progress',{text:'加载 Rust 计算引擎…'});
-  await init();
+  const {execute}=await loadEngine(data.action,text=>send('progress',{text}));
   let circuit=new Uint8Array(),g1=new Uint8Array();
   if(data.action==='import'){
    send('progress',{text:'读取证书与证明…'});

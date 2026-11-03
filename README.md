@@ -39,15 +39,20 @@ npm run dev
 
 打开 `http://localhost:3000`。本地服务从项目中的 `public/groth16/` 读取大参数。
 
-修改 Rust 或网页代码后重新构建（Rust stable、wasm-bindgen 版本必须匹配）：
+修改 Rust 或网页代码后重新构建（普通引擎和界面使用 stable；多线程引擎单独使用固定 nightly 重建支持原子操作的标准库）：
 
 ```sh
 rustup target add wasm32-unknown-unknown
+rustup toolchain install nightly-2025-11-15 --component rust-src --target wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.105 --locked
 npm run build:rust
 ```
 
 `web-dist/` 保存编译文件以及源码/产物哈希；普通构建拒绝过期或被修改的预编译文件。修改代码后需把重新生成的 `web-dist/` 一并提交。Windows 使用 `.gitattributes` 固定文本为 LF，避免自动换行转换破坏哈希。
+
+网页生成证明时自动使用共享内存 Rayon 线程池，参数曲线点解码、约束行求值与检查、FFT、多项式逐项运算和分批 MSM 均可并行。计算线程数使用浏览器报告的全部逻辑 CPU 数，至少 1；不再减一、设置 8 线程上限或按内存分档限制。策略与桌面端默认值一致，但浏览器报告值可能与系统可用逻辑 CPU 数不同。校验和导入证书只加载轻量单线程引擎。任务结束、失败或取消时释放整个线程池。
+
+GitHub Pages 使用项目路径内的 `isolation-worker.js` 补充 COOP/COEP 响应头，首次访问可能在界面出现前自动刷新一次。该 Service Worker 不缓存页面、方案或证书；公开参数仍使用原有分片缓存。不支持跨源隔离、共享内存，或线程启动失败时自动回退到单线程。自建服务器也可以直接返回 `Cross-Origin-Opener-Policy: same-origin` 和 `Cross-Origin-Embedder-Policy: require-corp`。
 
 生成 GitHub Pages 静态文件：
 
@@ -89,11 +94,11 @@ Release 工作流通过 `FLIGHT_PARAMETER_REPOSITORY` 和 `FLIGHT_PARAMETER_REF`
 
 为避免逐行内存选择产生过大电路，使用确定性的 AS-Waksman 置换网络证明查询表一致性，并按站点累计上下客事件。查询包含索引、路线与时间载荷、人员事件，三者共用同一组布尔交换；相邻相同索引值相等，事件总和与逐站载客量匹配。没有自行引入随机挑战的内存证明。
 
-证明阶段逐行消费约束矩阵，并在多项式计算后以每批 65,536 项进行多标量乘法，及时释放已经用完的证明参数向量。这只改变 arkworks 标准 Groth16 运算的内存调度；小型电路对同一随机数输出与上游逐字节相同的证明，不降低约束或关闭零知识。
+原生端与网页端共用约束构建、求值和证明实现。约束行使用 arkworks 的求值函数，只求值一次，结果同时用于满足性检查和证明多项式；独立行与多项式逐项运算在支持线程时并行，串行／并行选择集中在内部辅助函数中。已经检查的数据通过字段私有的 `Prepared` 交给证明阶段。每个矩阵求值后释放，全部稀疏矩阵在 FFT/MSM 前释放；多标量乘法仍按每批 65,536 项执行，并及时释放用完的参数向量。小型电路对同一随机数输出与上游逐字节相同的证明，不降低约束或关闭零知识。约束构建、行合并和摘要计算保留直接实现。
 
 公开输入为 32 个身份摘要字节和 9 项 u32 成绩。元信息按 `[format,rules,dataset,question,team,nonce]` 的紧凑 JSON 数组作 SHA-256；题号、队名、随机编号、数据集与规则因此绑定证明。规则为 `prp-flight-final-g16-v1`，协议为 `prp-flight-groth16/1`。证明使用新鲜平台安全随机数，压缩后 128 字节。
 
-验证器只使用编入程序的固定 VK，不接受证书自带密钥。公开参数在反序列化前与程序内置 SHA-256、大小匹配；每批最多 32,768 个点分块读取，原生端并行还原曲线点，WASM 保留单线程。参数编码与固定密钥不变，已下载的参数包继续使用。证明前再检查矩阵摘要和约束满足性。PNG 的 PRG2 格式见 [IMAGE_FORMAT.md](public/IMAGE_FORMAT.md)。
+验证器只使用编入程序的固定 VK，不接受证书自带密钥。公开参数在反序列化前与程序内置 SHA-256、大小匹配；每批最多 32,768 个点分块读取，原生端与支持多线程的网页端并行还原曲线点。参数编码与固定密钥不变，已下载的参数包继续使用。证明前再检查矩阵摘要和约束满足性。PNG 的 PRG2 格式见 [IMAGE_FORMAT.md](public/IMAGE_FORMAT.md)。
 
 ## 初始化信任
 
@@ -105,6 +110,7 @@ Release 工作流通过 `FLIGHT_PARAMETER_REPOSITORY` 和 `FLIGHT_PARAMETER_REF`
 
 ```sh
 cargo test --locked --workspace --release
+cargo test --locked -p flight-core --release all_circuit_matrices_match_pinned_setup -- --ignored
 node scripts/test-carrier.mjs
 REFERENCE_DIR=/path/to/private/trial_solve cargo test --locked -p flight-core --release --test checker
 REFERENCE_DIR=/path/to/private/trial_solve npm test
@@ -112,6 +118,8 @@ REFERENCE_DIR=/path/to/private/trial_solve npm test
 
 完整证明与对抗回归使用不随源码分发的 `.cache/rust-tests/job-qN.json`。`groth_regression` 直接篡改私密见证，验证约束拒绝不合法方案；`test-certificates.py` 验证元信息、成绩、证明篡改；`test-web-release.mjs` 测试准确构建出的 Worker 与 WASM；`test-web-preflight.mjs` 检查无效方案不会触发参数读取；`test-images.py` 测试压缩、缩放、旋转、裁切、遮挡。
 
-本次构建与验收结果见 DELIVERY_CHECKS.md；底层证明的已有性能记录见 VALIDATION.md。Node 仅作为开发测试宿主，不进入应用运行依赖。
+性能复现：`CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 RAYON_NUM_THREADS=8 cargo run --locked --release -p flight-core --example groth_profile -- /path/to/job.json --prove` 分别输出方案校验、见证转换、构建、摘要、约束检查和完整生成流程的时间；公开参数从本地 `public/groth16` 读取。浏览器先运行 `npm run build`，再用 `node scripts/test-web-threads.mjs --job /path/to/job.json --threads 8 --report .cache/benchmark.json` 对比固定 8 线程与单线程；可用 `--modes parallel` 只测多线程。线程数参数只控制测试，不改变应用的默认策略。报告不保存方案或证书。前后对比应使用相同方案、线程数、构建配置和设备，避免同时运行其他计算任务。
+
+本轮精简合并说明见 [WEB_THREADS_UPDATE.md](WEB_THREADS_UPDATE.md)。原有发布验收记录见 DELIVERY_CHECKS.md；底层证明的已有性能记录见 VALIDATION.md。Node 仅作为开发测试宿主，不进入应用运行依赖。
 
 字体使用 Noto Sans SC（SIL OFL 1.1）。依赖版本锁定于 Cargo.lock，许可证与置换网络来源见 public/THIRD_PARTY_LICENSES.txt。

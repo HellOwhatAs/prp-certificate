@@ -12,6 +12,8 @@
 <noscript>此应用需要 JavaScript 和 WebAssembly。</noscript>
 <script type="module">
 import './bridge.js';
+import {prepareIsolation} from './isolation.js';
+await prepareIsolation();
 import init,{start} from './ui/flight_ui.js';
 try{await init();await start(document.getElementById('flight'));document.getElementById('loading').hidden=true;}
 catch(e){console.error(e);document.getElementById('loading-text').textContent='界面加载失败，请刷新或使用支持 WebGL2 的浏览器。';}

@@ -30,11 +30,12 @@ async function walk(dir){
 }
 await walk(root);
 assert.ok(bytes<100_000_000,`unexpectedly large static site: ${bytes}`);
-for(const file of ['index.html','bridge.js','zk-worker.js','ui/flight_ui.js','engine/flight_core.js','ui/flight_ui_bg.wasm','engine/flight_core_bg.wasm','.nojekyll'])
+for(const file of ['index.html','bridge.js','zk-worker.js','ui/flight_ui.js','engine/flight_core.js','ui/flight_ui_bg.wasm','engine/flight_core_bg.wasm','engine-threaded/flight_core.js','engine-threaded/flight_core_bg.wasm','worker-host.js','engine-loader.js','thread-policy.js','thread-proxy.js','isolation.js','isolation-worker.js','.nojekyll'])
   await fs.access(`${root}/${file}`);
 const index=await fs.readFile(`${root}/index.html`,'utf8');
 assert.ok(index.includes("import './bridge.js'"));
 assert.ok(index.includes("from './ui/flight_ui.js'"));
 assert.ok(!/(?:src|href)=["']\//.test(index),'project Pages must use relative paths');
-assert.ok((await fs.readFile(`${root}/bridge.js`,'utf8')).includes("new URL('./zk-worker.js',import.meta.url)"));
+assert.ok((await fs.readFile(`${root}/worker-host.js`,'utf8')).includes("new URL('./zk-worker.js', import.meta.url)"));
+assert.match(await fs.readFile(`${root}/engine-threaded/flight_core.js`,'utf8'), /shared:\s*true/);
 console.log(`Pages passed: ${bytes} bytes, ${chunks} pinned parameter URLs, relative assets and worker path`);

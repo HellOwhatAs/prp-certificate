@@ -141,18 +141,18 @@ pub fn run_job(
                 info["matrix"].as_str() == Some(b.digest().as_str()),
                 "证明约束与公开参数不一致"
             );
-            b.satisfied()?;
             ensure!(
                 pk.a_query.len() == b.assignment.len()
                     && pk.l_query.len() + b.inputs == b.assignment.len(),
                 "公开参数维度不匹配"
             );
+            let scores: [u32; 9] = std::array::from_fn(|i| job_score(&b.assignment[33 + i]));
+            let prepared = crate::groth16::prover::prepare(b)?;
             progress("生成 Groth16 零知识证明…");
             let mut rng = rand::rngs::OsRng;
-            let scores: [u32; 9] = std::array::from_fn(|i| job_score(&b.assignment[33 + i]));
-            let proof = crate::groth16::prover::prove(
+            let proof = crate::groth16::prover::prove_prepared(
                 pk,
-                b,
+                prepared,
                 Fr::rand(&mut rng),
                 Fr::rand(&mut rng),
                 &mut progress,

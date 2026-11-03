@@ -7,6 +7,10 @@ license = "MIT"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Use coarse MSM jobs below rather than ark-ec's fine-grained parallel allocator.
+web-threads = ["dep:wasm-bindgen-rayon", "dep:rayon", "ark-poly/parallel"]
+
 [dependencies]
 flight-format = { path = "../flight-format" }
 ark-bn254 = "0.6"
@@ -35,4 +39,6 @@ getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
 wasm-bindgen = "=0.2.105"
 js-sys = "=0.3.82"
 console_error_panic_hook = "0.1"
+rayon = { version = "1.12", optional = true }
+wasm-bindgen-rayon = { version = "=1.3.0", features = ["no-bundler"], optional = true }
 

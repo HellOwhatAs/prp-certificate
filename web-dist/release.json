@@ -3,7 +3,7 @@
   "sources": [
     {
       "path": "Cargo.lock",
-      "sha256": "a2ccbc2cebd21c1c91cab8eec7546e1ccd8146e86812e70be872c5e1eee5ad57"
+      "sha256": "e2f01a8d98045dbf89d812187c67d02074d368c048aaa3b78ef8371c5702449f"
     },
     {
       "path": "Cargo.toml",
@@ -19,7 +19,7 @@
     },
     {
       "path": "crates/flight-core/Cargo.toml",
-      "sha256": "fffd1327eb947e90189d84fabd75a0fae937a06d74ac9178bc2139c892ed8075"
+      "sha256": "6d2198d54b2f4bb9f29c35270a43121f32ccadac2802543e32d7d9fcd70aa650"
     },
     {
       "path": "crates/flight-core/build.rs",
@@ -27,7 +27,7 @@
     },
     {
       "path": "crates/flight-core/examples/groth_profile.rs",
-      "sha256": "74667fbeaa7e51c3eeffd1227fd047a2e0cc9e8667cfd1fa465bebd6e2e0c971"
+      "sha256": "6a32007ff894b16d50642e240ab03c3954cf9835a88f6e10b372def76d0424be"
     },
     {
       "path": "crates/flight-core/examples/groth_regression.rs",
@@ -47,7 +47,7 @@
     },
     {
       "path": "crates/flight-core/src/engine.rs",
-      "sha256": "8cc3c488eb776701afacbc45836814a72ef3f6c4562df062c844a991695bdaa6"
+      "sha256": "0fe94b6665acb894be056dcd0347f90178ede969d4af6abcd4298535dcbbca84"
     },
     {
       "path": "crates/flight-core/src/groth16/circuit.rs",
@@ -55,7 +55,7 @@
     },
     {
       "path": "crates/flight-core/src/groth16/mod.rs",
-      "sha256": "94ab1e4c4927aac3578781734e1b2476be2329bd2aadf8575aa6e23d894da453"
+      "sha256": "ecf1656d5ea1efcc0ef9b97226cb2cef9a35e67b0c67a83b960950dd1d0498d9"
     },
     {
       "path": "crates/flight-core/src/groth16/permutation.rs",
@@ -63,7 +63,7 @@
     },
     {
       "path": "crates/flight-core/src/groth16/prover.rs",
-      "sha256": "4796fc87a8c016046030db2bfd17d8c75c1467f3586dd7eabfa98427e612d929"
+      "sha256": "c53a0983a2ae5d587d383f5a0a522901bfb7d8f659d9a0669ff33ef82a029a22"
     },
     {
       "path": "crates/flight-core/src/groth16/r1cs.rs",
@@ -71,7 +71,7 @@
     },
     {
       "path": "crates/flight-core/src/lib.rs",
-      "sha256": "3bc102f571f354ac356b934dbcdc80b569368bff408ffb84aaafc21ae4d6e357"
+      "sha256": "a76c349d453fecdd3c14e51ed38a6c8e513efc82e0f660d0eae5c43ded1c200f"
     },
     {
       "path": "crates/flight-core/src/native_parameters.rs",
@@ -79,7 +79,7 @@
     },
     {
       "path": "crates/flight-core/src/parameters.rs",
-      "sha256": "faabbe84f0dfdf12663649fb31aab65eaef6ce7e37c5449f19c2d1a168507c0e"
+      "sha256": "eda34394e422f6a88af01ef2601b28dc8044acb93b36da77b876e10c44f7ff79"
     },
     {
       "path": "crates/flight-core/tests/checker.rs",
@@ -147,7 +147,7 @@
     },
     {
       "path": "public/THIRD_PARTY_LICENSES.txt",
-      "sha256": "09291ef1c5a84a7a98af1a1b4fc5789369d26eac74dd5afaa77f3bb93af0bea9"
+      "sha256": "7be8519076fa65b9cb4ad57869c8ebfc29b690c35db9ec63e1c3b4c5e1b82379"
     },
     {
       "path": "public/data/dataset-id.txt",
@@ -203,7 +203,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "130fc06ad1b17079faa836afb7939a0d8f2c856f37ec25938f7023d0a163da07"
+      "sha256": "0b5c06109a1b1e4fd73e3c255547d4c323487e954055cd57369eed39455ea589"
     },
     {
       "path": "public/problem.pdf",
@@ -239,15 +239,27 @@
     },
     {
       "path": "scripts/build-rust.mjs",
-      "sha256": "1652116fee89c9ddabfaab1c9fb6649d0e856aaaa0f3f3cec3a1c637e710a4c3"
+      "sha256": "1207e5846984552f7375b1507fc1c5a942312f3ff3529d173b0285584a5b456d"
     },
     {
       "path": "scripts/build.mjs",
-      "sha256": "534710d2e49a4d5091c382bf11dff6844935ceb5b27c807137903a356f635475"
+      "sha256": "0af63413ba18a124bf6a7d0c11e0751dcd1648e7dc0a76985c2824cfbcc2fda8"
     },
     {
       "path": "web/bridge.js",
-      "sha256": "69596748659c122a53f6ee840bc661cc059124a1d5686791a8dafdb9a649d5d0"
+      "sha256": "53eae51def3f720190bd925701b788f8e5bfb156aee72665408771cf8f56ecf5"
+    },
+    {
+      "path": "web/engine-loader.js",
+      "sha256": "515c4d4ad8f5c63c68df6614d7b9269dde50be9b5d4946f94b9283f0b3646814"
+    },
+    {
+      "path": "web/isolation-worker.js",
+      "sha256": "33f9718e8e4e3aa2f578f54bd030adfbc87ab90f33d9ab957a9f1bdf71b0cdd0"
+    },
+    {
+      "path": "web/isolation.js",
+      "sha256": "3f929c0862f1bdfcbea65ce4016cb4d26bc7a6411252e0b987eab7f037bf63c8"
     },
     {
       "path": "web/parameter-bundle.js",
@@ -258,14 +270,54 @@
       "sha256": "ff844b8c2bf4d4a5262c15fe70dc30e090796f3035f9ae2471531ec9f1810be8"
     },
     {
+      "path": "web/rayon-worker.js",
+      "sha256": "c2647232fd3ac6ac7751ca4e4271a5008a01f52923cad2520e9d023e4a1b9bae"
+    },
+    {
+      "path": "web/thread-policy.js",
+      "sha256": "074f8710bd7c34a858a7b23c356f71de5c6be9fa1d25bb16dcdc08290fa50e8e"
+    },
+    {
+      "path": "web/thread-proxy.js",
+      "sha256": "253b47b7fa6127ffc2dc39a6a2201e81c815267fb41a4677a9fc87356aab86fe"
+    },
+    {
+      "path": "web/worker-host.js",
+      "sha256": "560e124ca256413411ae6ee4e82fb08439340688f347b3eede9e4c381c4fe9b7"
+    },
+    {
       "path": "web/zk-worker.js",
-      "sha256": "4fba4a549dfd29fd0d1d67333b78e1d378bf9e84631f0d1d7c7b4628c17b235e"
+      "sha256": "9f66e01f713ca8300426e3e9554fe47bf5166d88ee47ad37ece7ceceac77a584"
     }
   ],
   "artifacts": [
     {
       "path": "web-dist/bridge.js",
-      "sha256": "69596748659c122a53f6ee840bc661cc059124a1d5686791a8dafdb9a649d5d0"
+      "sha256": "53eae51def3f720190bd925701b788f8e5bfb156aee72665408771cf8f56ecf5"
+    },
+    {
+      "path": "web-dist/engine-loader.js",
+      "sha256": "515c4d4ad8f5c63c68df6614d7b9269dde50be9b5d4946f94b9283f0b3646814"
+    },
+    {
+      "path": "web-dist/engine-threaded/flight_core.d.ts",
+      "sha256": "4d984e01c23a3eb96b3b614e2457579ad45d0ced00ec5d2fa090671be2e0e861"
+    },
+    {
+      "path": "web-dist/engine-threaded/flight_core.js",
+      "sha256": "6f4bf115563ae0559924133ab4e0c7650e45a4ce6a253dd83d8aedd39314b84c"
+    },
+    {
+      "path": "web-dist/engine-threaded/flight_core_bg.wasm",
+      "sha256": "c60f055dd1d849074c9e834673b07d36e70485f40f6d859eb9a655bbc5f63c1b"
+    },
+    {
+      "path": "web-dist/engine-threaded/flight_core_bg.wasm.d.ts",
+      "sha256": "636c4eaca95d176ccf954eb4ab20cfa98343cbbd7eb85037c35b4a8bd6bf9ce1"
+    },
+    {
+      "path": "web-dist/engine-threaded/snippets/wasm-bindgen-rayon-38edf6e439f6d70d/src/workerHelpers.no-bundler.js",
+      "sha256": "c2647232fd3ac6ac7751ca4e4271a5008a01f52923cad2520e9d023e4a1b9bae"
     },
     {
       "path": "web-dist/engine/flight_core.d.ts",
@@ -277,11 +329,19 @@
     },
     {
       "path": "web-dist/engine/flight_core_bg.wasm",
-      "sha256": "8f5bf75a8ca0949a63344a59fd0c73c14fbbbfb274d2326bc05bb9a8e011f5a8"
+      "sha256": "216cecd135242b159226bc12ea36454d02bdf04cc7bf84652912902500919824"
     },
     {
       "path": "web-dist/engine/flight_core_bg.wasm.d.ts",
       "sha256": "0836731e92a81ad221fc80f50b6369d8e8f559a16562810da1686510730afcb6"
+    },
+    {
+      "path": "web-dist/isolation-worker.js",
+      "sha256": "33f9718e8e4e3aa2f578f54bd030adfbc87ab90f33d9ab957a9f1bdf71b0cdd0"
+    },
+    {
+      "path": "web-dist/isolation.js",
+      "sha256": "3f929c0862f1bdfcbea65ce4016cb4d26bc7a6411252e0b987eab7f037bf63c8"
     },
     {
       "path": "web-dist/parameter-bundle.js",
@@ -292,24 +352,40 @@
       "sha256": "ff844b8c2bf4d4a5262c15fe70dc30e090796f3035f9ae2471531ec9f1810be8"
     },
     {
+      "path": "web-dist/rayon-worker.js",
+      "sha256": "c2647232fd3ac6ac7751ca4e4271a5008a01f52923cad2520e9d023e4a1b9bae"
+    },
+    {
+      "path": "web-dist/thread-policy.js",
+      "sha256": "074f8710bd7c34a858a7b23c356f71de5c6be9fa1d25bb16dcdc08290fa50e8e"
+    },
+    {
+      "path": "web-dist/thread-proxy.js",
+      "sha256": "253b47b7fa6127ffc2dc39a6a2201e81c815267fb41a4677a9fc87356aab86fe"
+    },
+    {
       "path": "web-dist/ui/flight_ui.d.ts",
-      "sha256": "dfed6b16c74fb32af7e1c41c0ada144bf515231428e2c1f5425beee8bcd54060"
+      "sha256": "7e2629314af9cfbc66d08b5eb1356ecbefa11cc1eba34b6e647c9c45c2dd5fea"
     },
     {
       "path": "web-dist/ui/flight_ui.js",
-      "sha256": "9ddd9a71403fa048e671f51bd88ee9a57e40445af0c76e5a0b4920bb467e7914"
+      "sha256": "fd75b216af8427c290fe2d6c3cec31f66b82756a9027bcad89036017e603d38e"
     },
     {
       "path": "web-dist/ui/flight_ui_bg.wasm",
-      "sha256": "4849c7a339daac5321ee3b2ccebd42cf61da3b254622c8df61d8cd52155d521f"
+      "sha256": "610db52230d7eed159c44b0052a02d4744c2f76cf92f5ba897e022b388808306"
     },
     {
       "path": "web-dist/ui/flight_ui_bg.wasm.d.ts",
-      "sha256": "5b70ca40e142912f196da63d19d31f68639127d130de1c36e5d34fb9e9ed6876"
+      "sha256": "a5997714509c41032edc2587e1428417cbd6ff50fa4a9ba7864366ca760b45a5"
+    },
+    {
+      "path": "web-dist/worker-host.js",
+      "sha256": "560e124ca256413411ae6ee4e82fb08439340688f347b3eede9e4c381c4fe9b7"
     },
     {
       "path": "web-dist/zk-worker.js",
-      "sha256": "4fba4a549dfd29fd0d1d67333b78e1d378bf9e84631f0d1d7c7b4628c17b235e"
+      "sha256": "9f66e01f713ca8300426e3e9554fe47bf5166d88ee47ad37ece7ceceac77a584"
     }
   ]
 }

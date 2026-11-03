@@ -70,6 +70,8 @@ python scripts/test-parameter-integrity.py
 
 `prp-certificate-pages.zip` 的预构建地址是 `HellOwhatAs/prp-certificate/main`，适用于当前目标仓库。走上述 Actions 部署时不必手动上传这个 ZIP；Actions 会生成更严格固定到提交 SHA 的版本。更换仓库名也只需让 Actions 重新构建。
 
+网页同时打包单线程和多线程引擎。请完整保留 `engine-threaded/`、其 `snippets/` 子目录和 `isolation-worker.js` 等文件；首次访问会尝试自动刷新一次建立跨源隔离。HTTPS 的 GitHub Pages 项目子路径可直接使用，无需额外服务器。浏览器拒绝共享内存或 Service Worker 时仍可单线程生成证书。
+
 ## 4. 编译并发布 GitHub Release
 
 代码和三个参数包全部上传后，创建一个新版本标签：

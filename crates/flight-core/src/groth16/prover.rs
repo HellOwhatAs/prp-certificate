@@ -8,13 +8,14 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{FftField, Field, PrimeField, Zero};
 use ark_groth16::{Proof, ProvingKey, r1cs_to_qap::evaluate_constraint};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
+#[cfg(any(not(target_arch = "wasm32"), feature = "web-threads"))]
+use rayon::prelude::*;
 
 fn msm<G: CurveGroup<ScalarField = Fr>>(bases: &[G::Affine], scalars: &[Fr]) -> G {
     assert_eq!(bases.len(), scalars.len());
-    let mut result = G::zero();
     // Ark's full-size signed-window MSM materializes n*window-count digits.
     // Bound its temporary storage independently of the number of constraints.
-    for (points, values) in bases.chunks(65536).zip(scalars.chunks(65536)) {
+    let chunk = |(points, values): (&[G::Affine], &[Fr])| {
         let mut p = Vec::with_capacity(points.len());
         let mut s = Vec::with_capacity(points.len());
         for (point, value) in points.iter().zip(values) {
@@ -23,9 +24,22 @@ fn msm<G: CurveGroup<ScalarField = Fr>>(bases: &[G::Affine], scalars: &[Fr]) -> 
                 s.push(value.into_bigint());
             }
         }
-        result += G::msm_bigint(&p, &s);
-    }
-    result
+        G::msm_bigint(&p, &s)
+    };
+    // Bound each task's temporary storage and keep progress/JS on the caller.
+    // Parallelize whole MSM chunks, avoiding per-scalar cross-thread allocations.
+    #[cfg(all(target_arch = "wasm32", feature = "web-threads"))]
+    return bases
+        .par_chunks(65536)
+        .zip(scalars.par_chunks(65536))
+        .map(chunk)
+        .reduce(G::zero, |a, b| a + b);
+    #[cfg(not(all(target_arch = "wasm32", feature = "web-threads")))]
+    bases
+        .chunks(65536)
+        .zip(scalars.chunks(65536))
+        .map(chunk)
+        .fold(G::zero(), |a, b| a + b)
 }
 
 pub fn prove(
@@ -33,37 +47,72 @@ pub fn prove(
     b: Builder,
     r: Fr,
     s: Fr,
-    mut progress: impl FnMut(&str),
+    progress: impl FnMut(&str),
 ) -> Result<Proof<Bn254>, String> {
+    prove_prepared(pk, prepare(b)?, r, s, progress)
+}
+
+// Private fields ensure callers cannot skip constraint validation or mutate the
+// checked evaluations before proving. No witness/matrix cache survives a job.
+pub(crate) struct Prepared {
+    assignment: Vec<Fr>,
+    polynomials: [Vec<Fr>; 3],
+    inputs: usize,
+    domain: GeneralEvaluationDomain<Fr>,
+}
+
+pub(crate) fn prepare(b: Builder) -> Result<Prepared, String> {
     let (assignment, matrices, inputs) = b.into_parts();
     let count = matrices[0].len();
+    if matrices.iter().any(|rows| rows.len() != count) || inputs > assignment.len() {
+        return Err("证明约束维度不匹配".into());
+    }
     let domain = GeneralEvaluationDomain::<Fr>::new(count + inputs).ok_or("证明多项式过大")?;
     let size = domain.size();
-    let mut polynomials = Vec::with_capacity(3);
-    // Drop every matrix row immediately after evaluation; free all sparse
-    // matrices before FFT and the large H-query multiplication.
-    for rows in matrices {
+    // Evaluate each row ONCE for both satisfaction checking and the QAP.
+    // Schedule independent rows and use arkworks' evaluator. Drop each matrix
+    // on the caller to avoid contention in the WASM allocator; all sparse
+    // matrices are freed before FFT/MSM, as in the original bounded prover.
+    let mut polynomials = matrices.map(|rows| {
         let mut values = vec![Fr::zero(); size];
-        for (i, row) in rows.into_iter().enumerate() {
-            values[i] = evaluate_constraint(&row, &assignment);
-        }
-        polynomials.push(values);
+        for_each_pair(&mut values[..count], &rows, |value, row| {
+            *value = evaluate_constraint(row, &assignment);
+        });
+        values
+    });
+    let [a, b, c] = &polynomials;
+    if let Some(i) = first_unsatisfied(&a[..count], &b[..count], &c[..count]) {
+        return Err(format!("R1CS constraint {i} failed"));
     }
-    let mut iter = polynomials.into_iter();
-    let mut a = iter.next().unwrap();
-    let mut b = iter.next().unwrap();
-    let mut c = iter.next().unwrap();
-    drop(iter);
-    a[count..count + inputs].copy_from_slice(&assignment[..inputs]);
+    polynomials[0][count..count + inputs].copy_from_slice(&assignment[..inputs]);
+    Ok(Prepared {
+        assignment,
+        polynomials,
+        inputs,
+        domain,
+    })
+}
+
+pub(crate) fn prove_prepared(
+    pk: ProvingKey<Bn254>,
+    prepared: Prepared,
+    r: Fr,
+    s: Fr,
+    mut progress: impl FnMut(&str),
+) -> Result<Proof<Bn254>, String> {
+    let Prepared {
+        assignment,
+        polynomials: [mut a, mut b, mut c],
+        inputs,
+        domain,
+    } = prepared;
     progress("计算证明多项式…");
     domain.ifft_in_place(&mut a);
     domain.ifft_in_place(&mut b);
     let coset = domain.get_coset(Fr::GENERATOR).ok_or("证明计算域无效")?;
     coset.fft_in_place(&mut a);
     coset.fft_in_place(&mut b);
-    for (a, b) in a.iter_mut().zip(b.iter()) {
-        *a *= b;
-    }
+    for_each_pair(&mut a, &b, |a, b| *a *= b);
     drop(b);
     domain.ifft_in_place(&mut c);
     coset.fft_in_place(&mut c);
@@ -71,9 +120,7 @@ pub fn prove(
         .evaluate_vanishing_polynomial(Fr::GENERATOR)
         .inverse()
         .ok_or("证明计算域无效")?;
-    for (a, c) in a.iter_mut().zip(c.iter()) {
-        *a = (*a - c) * inv;
-    }
+    for_each_pair(&mut a, &c, |a, c| *a = (*a - c) * inv);
     drop(c);
     coset.ifft_in_place(&mut a);
     let ProvingKey {
@@ -117,4 +164,29 @@ pub fn prove(
         b: gb2.into_affine(),
         c: gc.into_affine(),
     })
+}
+
+// Keep platform selection out of the proof equations. Both paths apply the
+// same operation to disjoint output entries; small jobs stay in coarse chunks.
+fn for_each_pair<A: Send, B: Sync>(a: &mut [A], b: &[B], op: impl Fn(&mut A, &B) + Sync + Send) {
+    assert_eq!(a.len(), b.len());
+    #[cfg(any(not(target_arch = "wasm32"), feature = "web-threads"))]
+    let pairs = a.par_iter_mut().zip(b).with_min_len(1024);
+    #[cfg(all(target_arch = "wasm32", not(feature = "web-threads")))]
+    let pairs = a.iter_mut().zip(b);
+    pairs.for_each(|(a, b)| op(a, b));
+}
+
+fn first_unsatisfied(a: &[Fr], b: &[Fr], c: &[Fr]) -> Option<usize> {
+    let fails = |((a, b), c): ((&Fr, &Fr), &Fr)| *a * b != *c;
+    // find-any would make the error depend on thread scheduling.
+    #[cfg(any(not(target_arch = "wasm32"), feature = "web-threads"))]
+    return a
+        .par_iter()
+        .zip(b)
+        .zip(c)
+        .with_min_len(1024)
+        .position_first(fails);
+    #[cfg(all(target_arch = "wasm32", not(feature = "web-threads")))]
+    a.iter().zip(b).zip(c).position(fails)
 }
