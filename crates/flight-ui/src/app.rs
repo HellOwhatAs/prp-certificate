@@ -261,8 +261,16 @@ impl FlightApp {
             return;
         }
         let team = self.team.trim();
-        if team.is_empty() || team.chars().count() > 40 || team.chars().any(char::is_control) {
-            self.show_error("请输入 1–40 字的队伍名称");
+        if team.is_empty() {
+            self.show_error("请输入队伍署名");
+            return;
+        }
+        if team.chars().count() > 40 {
+            self.show_error("队伍署名不能超过 40 个字符");
+            return;
+        }
+        if team.chars().any(char::is_control) {
+            self.show_error("队伍署名不能包含控制字符");
             return;
         }
         let mut checks = VecDeque::new();
@@ -281,8 +289,8 @@ impl FlightApp {
                 return;
             }
             if question.proof_for(&self.team).is_none() && !question.complete_files() {
-                question.error = "队伍名称与证书不一致，请重新选择方案文件".into();
-                self.show_error(format!("第 {} 问：队伍名称与证书不一致", q + 1));
+                question.error = "队伍署名与证书不一致，请重新选择方案文件".into();
+                self.show_error(format!("第 {} 问：队伍署名与证书不一致", q + 1));
                 return;
             }
             if question.complete_files() && question.proof_for(&self.team).is_none() {
@@ -794,13 +802,12 @@ impl FlightApp {
     }
     fn form(&mut self, ui: &mut egui::Ui) {
         Self::section(ui, |ui| {
-            ui.label("队伍名称");
+            ui.label("队伍署名");
             if ui
                 .add_enabled(
                     !self.busy(),
                     egui::TextEdit::singleline(&mut self.team)
                         .id_salt("certificate-team-name")
-                        .hint_text(RichText::new("1–40 字").color(MUTED))
                         .margin(egui::vec2(12.0, 10.0))
                         .desired_width(f32::INFINITY),
                 )
@@ -1246,7 +1253,7 @@ impl eframe::App for FlightApp {
             .frame(
                 egui::Frame::new()
                     .fill(Color32::from_rgb(245, 248, 247))
-                    .inner_margin(24),
+                    .inner_margin(egui::Margin::symmetric(24, 0)),
             )
             .show(ctx, |ui| {
                 let mut scroll = egui::ScrollArea::vertical()
@@ -1255,10 +1262,15 @@ impl eframe::App for FlightApp {
                 if std::mem::take(&mut self.reset_scroll) {
                     scroll = scroll.vertical_scroll_offset(0.0);
                 }
-                scroll.show(ui, |ui| match self.page {
-                    0 => self.generate_page(ui),
-                    1 => self.verify_page(ui),
-                    _ => self.board_page(ui),
+                scroll.show(ui, |ui| {
+                    // Vertical breathing room belongs to the scrolling content, not its viewport.
+                    ui.add_space(24.0);
+                    match self.page {
+                        0 => self.generate_page(ui),
+                        1 => self.verify_page(ui),
+                        _ => self.board_page(ui),
+                    }
+                    ui.add_space(24.0);
                 });
             });
         if self.confirm_clear {

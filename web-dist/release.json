@@ -3,7 +3,7 @@
   "sources": [
     {
       "path": "Cargo.lock",
-      "sha256": "acdd3d08203271eddba5a000c426871caa420f707d503ba22c1f4d30310bece3"
+      "sha256": "a2ccbc2cebd21c1c91cab8eec7546e1ccd8146e86812e70be872c5e1eee5ad57"
     },
     {
       "path": "Cargo.toml",
@@ -95,7 +95,7 @@
     },
     {
       "path": "crates/flight-ui/Cargo.toml",
-      "sha256": "0ba0662f6bc12d2d3a4d937ae6f644d9f835a65607b4cf33f6d963faf2767915"
+      "sha256": "eab4da422b9af8ba88721d5269b092888bf0f1291de13c447a61352eedd0c388"
     },
     {
       "path": "crates/flight-ui/examples/certificate_io.rs",
@@ -107,7 +107,7 @@
     },
     {
       "path": "crates/flight-ui/src/app.rs",
-      "sha256": "e4cbc874357dc5158bc985c203b971efe042491f692684c120322c5cbc837a2c"
+      "sha256": "b9d6e58769954190ff3490c7ece84a4e5ecfa807c46bf99798346fcbd23e3454"
     },
     {
       "path": "crates/flight-ui/src/carrier.rs",
@@ -293,19 +293,19 @@
     },
     {
       "path": "web-dist/ui/flight_ui.d.ts",
-      "sha256": "f53ef8532c153a61b42558c160b713260a78fa75fbe02c294013a9909eba7ef9"
+      "sha256": "dfed6b16c74fb32af7e1c41c0ada144bf515231428e2c1f5425beee8bcd54060"
     },
     {
       "path": "web-dist/ui/flight_ui.js",
-      "sha256": "d8b76e9296e1a37ad3004845183469bd46dee5b995e29983639ad71c32d45789"
+      "sha256": "9ddd9a71403fa048e671f51bd88ee9a57e40445af0c76e5a0b4920bb467e7914"
     },
     {
       "path": "web-dist/ui/flight_ui_bg.wasm",
-      "sha256": "bce3b54ccd5f0fa8c1a260c9660de27e0e4b363cac054955c001ce2fc203617c"
+      "sha256": "4849c7a339daac5321ee3b2ccebd42cf61da3b254622c8df61d8cd52155d521f"
     },
     {
       "path": "web-dist/ui/flight_ui_bg.wasm.d.ts",
-      "sha256": "037400d6083ddb01e9cca1db156dc579c7d4523afad29da38a988506908e39f0"
+      "sha256": "5b70ca40e142912f196da63d19d31f68639127d130de1c36e5d34fb9e9ed6876"
     },
     {
       "path": "web-dist/zk-worker.js",

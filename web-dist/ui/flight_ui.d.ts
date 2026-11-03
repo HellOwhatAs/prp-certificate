@@ -1,8 +1,8 @@
 /* tslint:disable */
 /* eslint-disable */
-export function parse_certificate_file(bytes: Uint8Array): string;
 export function certificate_png(item_json: string): Uint8Array;
 export function start(canvas: HTMLCanvasElement): Promise<void>;
+export function parse_certificate_file(bytes: Uint8Array): string;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -11,12 +11,12 @@ export interface InitOutput {
   readonly certificate_png: (a: number, b: number, c: number) => void;
   readonly parse_certificate_file: (a: number, b: number, c: number) => void;
   readonly start: (a: number) => number;
-  readonly __wasm_bindgen_func_elem_1822: (a: number, b: number, c: number) => void;
-  readonly __wasm_bindgen_func_elem_1641: (a: number, b: number) => void;
-  readonly __wasm_bindgen_func_elem_1823: (a: number, b: number, c: number) => void;
-  readonly __wasm_bindgen_func_elem_2247: (a: number, b: number, c: number) => void;
-  readonly __wasm_bindgen_func_elem_2245: (a: number, b: number) => void;
-  readonly __wasm_bindgen_func_elem_4414: (a: number, b: number, c: number, d: number) => void;
+  readonly __wasm_bindgen_func_elem_2361: (a: number, b: number, c: number) => void;
+  readonly __wasm_bindgen_func_elem_2360: (a: number, b: number) => void;
+  readonly __wasm_bindgen_func_elem_1918: (a: number, b: number, c: number) => void;
+  readonly __wasm_bindgen_func_elem_1884: (a: number, b: number) => void;
+  readonly __wasm_bindgen_func_elem_1919: (a: number, b: number, c: number) => void;
+  readonly __wasm_bindgen_func_elem_4441: (a: number, b: number, c: number, d: number) => void;
   readonly __wbindgen_export: (a: number, b: number) => number;
   readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
   readonly __wbindgen_export3: (a: number) => void;

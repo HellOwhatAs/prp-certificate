@@ -75,13 +75,13 @@ python scripts/test-parameter-integrity.py
 代码和三个参数包全部上传后，创建一个新版本标签：
 
 ```sh
-git tag v0.4.4
-git push origin v0.4.4
+git tag v0.4.5
+git push origin v0.4.5
 ```
 
-这会触发 **Actions → Build and publish Release**。以后使用新的版本号，例如 `v0.4.5`；不要覆盖旧标签。
+这会触发 **Actions → Build and publish Release**。以后使用新的版本号，例如 `v0.4.6`；不要覆盖旧标签。
 
-也可在 Actions 手动运行：在 `tag` 输入框填写一个**已经推送到仓库**的标签，例如 `v0.4.4`。工作流会核对标签并让所有构建使用同一提交。
+也可在 Actions 手动运行：在 `tag` 输入框填写一个**已经推送到仓库**的标签，例如 `v0.4.5`。工作流会核对标签并让所有构建使用同一提交。
 
 | 系统      | 架构                  | Release 附件                      |
 | ------- | ------------------- | ------------------------------- |
