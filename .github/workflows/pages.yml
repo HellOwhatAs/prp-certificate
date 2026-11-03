@@ -1,14 +1,13 @@
 name: Deploy GitHub Pages
 on:
+  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
-  pages: write
-  id-token: write
 concurrency:
-  group: pages
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build:
@@ -26,22 +25,32 @@ jobs:
       - name: Validate data and every public parameter chunk
         run: python scripts/test-parameter-integrity.py
       - run: npm test
+      - run: node scripts/test-thread-policy.mjs
       - run: node scripts/test-parameters.mjs
       - name: Assemble checked-in WASM and pin parameter URLs to this commit
         run: npm run build:pages
       - run: node scripts/test-pages-build.mjs
       - run: node scripts/test-web-preflight.mjs
-      - uses: actions/configure-pages@v5
+      - run: npm install --no-save --package-lock=false playwright@1.62.1
+      - run: npx playwright install --with-deps chromium
+      - name: Test project-path isolation, threading and fallback in Chromium
+        run: node scripts/test-web-threads.mjs
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:
           path: dist/client
   deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
+    permissions:
+      pages: write
+      id-token: write
     runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/configure-pages@v5
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4

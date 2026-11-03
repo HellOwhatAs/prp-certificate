@@ -133,4 +133,4 @@ npm run build:rust
 - [GitHub 托管 runner 和架构](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 - [GitHub 仓库限制](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits)
 
-本次整理日期：2026-11-02；源自提交 `66ac2ea`。原始研究/证明设计及先前验证结果见 README.md 和 VALIDATION.md。
+证明设计、初始化信任假设及本地验证命令见 [README.md](README.md)。

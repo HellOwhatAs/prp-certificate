@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory() as temporary:
         shutil.copytree(Path('public')/folder,root/'public'/folder)
     for file in ['problem.pdf','IMAGE_FORMAT.md']:
         shutil.copy2(Path('public')/file,root/'public'/file)
-    for file in ['README.md','VALIDATION.md','DEPLOY_GITHUB.md']:
+    for file in ['README.md','DEPLOY_GITHUB.md']:
         shutil.copy2(file,root/file)
     (root/'licenses').mkdir()
     for source in ['assets/OFL.txt','public/THIRD_PARTY_LICENSES.txt']:

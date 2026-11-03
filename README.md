@@ -18,14 +18,14 @@ Rust / egui 网页与跨平台桌面应用。导入航线、人员分配 CSV，�
 
 完整步骤见 [DEPLOY_GITHUB.md](DEPLOY_GITHUB.md)。本整理版以 GitHub Pages + 公开 GitHub 仓库为默认部署方式，无需 R2、服务器、密钥或额外服务。
 
-- `main` 推送后由 `.github/workflows/pages.yml` 发布 Pages。
+- `main` 推送后由 `.github/workflows/pages.yml` 执行检查，通过后发布 Pages。PR 只执行检查。
 - 推送 `v*` 标签，或在 Actions 中输入已有标签，由 `.github/workflows/release.yml` 编译并发布六个平台：Windows / macOS / Linux × x64 / ARM64。
 - 三问参数来自原有固定初始化，SHA-256 与原项目一致；本次未重做参数初始化，未改题目规则或单问证明约束。
 - 下载包分为源码、三个参数 ZIP、一个可选的预构建 Pages ZIP。源码包和三个参数包合并后才是可完整部署的项目。
 
 网页 JavaScript 仅负责 WASM 装载、公开证明组件的下载缓存和可取消 Worker；CSV 方案、证书与计算任务均在本机处理。Pages 构建只包含约 30 MB 的静态文件。参数从同一公开仓库的 `raw.githubusercontent.com` 读取，Actions 固定到该次提交 SHA；不依赖旧 Sites 站点。用户无需手动管理网页参数。桌面端也会在首次生成相应小问时自动下载并缓存，逐片校验长度和 SHA-256；不在启动时下载全部三问。
 
-三问首次生成约下载 229 / 428 / 456 MB，按 4 MiB 分片校验并缓存；仅校验方案或验证证书不需要下载大参数。网络需能访问 GitHub Raw，首次生成仍受下载带宽影响。网页建议 64 位桌面浏览器、WebGL2 和至少 8 GB 内存。原有性能记录见 VALIDATION.md。
+三问首次生成约下载 229 / 428 / 456 MB，按 4 MiB 分片校验并缓存；仅校验方案或验证证书不需要下载大参数。网络需能访问 GitHub Raw，首次生成仍受下载带宽影响。网页建议 64 位桌面浏览器、WebGL2 和至少 8 GB 内存。
 
 ## 本地运行与构建
 
@@ -120,6 +120,6 @@ REFERENCE_DIR=/path/to/private/trial_solve npm test
 
 性能复现：`CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 RAYON_NUM_THREADS=8 cargo run --locked --release -p flight-core --example groth_profile -- /path/to/job.json --prove` 分别输出方案校验、见证转换、构建、摘要、约束检查和完整生成流程的时间；公开参数从本地 `public/groth16` 读取。浏览器先运行 `npm run build`，再用 `node scripts/test-web-threads.mjs --job /path/to/job.json --threads 8 --report .cache/benchmark.json` 对比固定 8 线程与单线程；可用 `--modes parallel` 只测多线程。线程数参数只控制测试，不改变应用的默认策略。报告不保存方案或证书。前后对比应使用相同方案、线程数、构建配置和设备，避免同时运行其他计算任务。
 
-本轮精简合并说明见 [WEB_THREADS_UPDATE.md](WEB_THREADS_UPDATE.md)。原有发布验收记录见 DELIVERY_CHECKS.md；底层证明的已有性能记录见 VALIDATION.md。Node 仅作为开发测试宿主，不进入应用运行依赖。
+`.github/workflows/pages.yml` 同时执行构建、参数完整性、线程策略和 Chromium 浏览器回归检查；浏览器检查覆盖跨源隔离、线程启动、单线程回退及 Worker 清理，默认不运行完整证明性能测试。Node 仅作为开发测试宿主，不进入应用运行依赖。
 
 字体使用 Noto Sans SC（SIL OFL 1.1）。依赖版本锁定于 Cargo.lock，许可证与置换网络来源见 public/THIRD_PARTY_LICENSES.txt。
