@@ -46,8 +46,7 @@ with tempfile.TemporaryDirectory() as temporary:
         '首次生成某一问时，程序自动从 GitHub 下载所需参数并缓存；以后无需重复下载。\n'
         '三问首次下载约 229 / 428 / 456 MB；仅校验和验证证书无需下载参数。'
         '下载中断后可重试，已完成的分片会保留。\n'
-        '离线使用：可下载 prp-flight-parameters-qN.zip，将其中 public 文件夹合并到程序目录。'
-        '完成后应存在 public/groth16/qN-0.dat，不要额外嵌套目录。\n'
+        '离线参数也须放入统一缓存目录，按参数哈希分目录；具体路径见 README.md。\n'
         'Linux 需要桌面环境及 X11/Wayland/OpenGL 运行库；macOS / Windows 程序未作开发者签名。\n'
         '无需 Node、Python 或服务器。所有方案处理、证明与验证均在本机完成。\n',encoding='utf-8')
     if system=='windows' or label.startswith('windows-'):

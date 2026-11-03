@@ -12,9 +12,9 @@ const fetcher=async(url,options)=>{assert.equal(options.credentials,'same-origin
 const read=opts=>readRemoteParameters(1,info,()=>{},{fetch:fetcher,cacheStorage,...opts});
 assert.deepEqual(Buffer.from(await read()),joined);assert.equal(calls.length,3);
 calls=[];assert.deepEqual(Buffer.from(await read({fetch:()=>{throw Error('offline');}})),joined);assert.equal(calls.length,0);
-saved.set(parts[1].url,new Response(new Uint8Array(data[1].length)));
+saved.set(parts[1].key,new Response(new Uint8Array(data[1].length)));
 calls=[];assert.deepEqual(Buffer.from(await read()),joined);assert.deepEqual(calls,[parts[1].url]);
-saved.delete(parts[2].url);calls=[];
+saved.delete(parts[2].key);calls=[];
 await assert.rejects(()=>read({fetch:async()=>new Response('',{status:503})}));
 assert.equal(saved.size,2);assert.deepEqual(Buffer.from(await read()),joined);assert.deepEqual(calls,[parts[2].url]);
 assert.deepEqual(Buffer.from(await read({cacheStorage:{open:async()=>{throw Error('storage disabled');}}})),joined);

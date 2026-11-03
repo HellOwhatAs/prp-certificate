@@ -2,7 +2,7 @@ pub mod checker;
 mod engine;
 pub mod groth16;
 #[cfg(not(target_arch = "wasm32"))]
-mod native_parameters;
+pub mod native_parameters;
 mod parameters;
 pub use engine::{run_job, verify_certificate};
 #[cfg(all(target_arch = "wasm32", feature = "web-threads"))]

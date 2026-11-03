@@ -27,6 +27,7 @@ jobs:
       - run: npm test
       - run: node scripts/test-thread-policy.mjs
       - run: node scripts/test-parameters.mjs
+      - run: node scripts/test-storage.mjs
       - name: Assemble checked-in WASM and pin parameter URLs to this commit
         run: npm run build:pages
       - run: node scripts/test-pages-build.mjs

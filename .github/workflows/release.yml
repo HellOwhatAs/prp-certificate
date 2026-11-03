@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing version tag, for example v0.4.5'
+        description: 'Existing version tag, for example v0.4.6'
         required: true
         type: string
 permissions:
@@ -32,7 +32,7 @@ jobs:
           import os, re, subprocess
           tag=os.environ['RELEASE_TAG']
           if not re.fullmatch(r'v[0-9][A-Za-z0-9._-]*',tag):
-              raise SystemExit('Expected a version tag such as v0.4.5')
+              raise SystemExit('Expected a version tag such as v0.4.6')
           sha=subprocess.check_output(['git','rev-parse','--verify',f'refs/tags/{tag}^{{commit}}'],text=True).strip()
           head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           if head != sha:
@@ -112,6 +112,7 @@ jobs:
       - run: python scripts/test-parameter-integrity.py
       - run: npm test
       - run: node scripts/test-parameters.mjs
+      - run: node scripts/test-storage.mjs
       - name: Build static Pages download from the same release commit
         env:
           RELEASE_COMMIT: ${{ needs.resolve.outputs.sha }}

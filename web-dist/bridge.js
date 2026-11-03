@@ -1,6 +1,12 @@
 import {EngineWorker} from './worker-host.js';
+import {manageParameters} from './parameters.js';
 let worker=null,queue=[];
 globalThis.flightBridge={
+  async manageStorage(operation,q){
+    if(worker&&operation!=='list')throw '请在当前任务结束后清理缓存';
+    try{return JSON.stringify(await manageParameters(operation,q||null));}
+    catch(error){throw error.message||String(error);}
+  },
   chooseFiles(slot){
     return new Promise((resolve,reject)=>{
       const input=document.createElement('input');

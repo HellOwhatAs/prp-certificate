@@ -9,6 +9,7 @@ pub enum FileEvent {
         bytes: Vec<u8>,
     },
     Saved(String),
+    Storage(Result<Value, String>),
     Error(String),
 }
 pub type FileQueue = Arc<Mutex<Vec<FileEvent>>>;
@@ -249,3 +250,33 @@ mod target {
     }
 }
 pub use target::Backend;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn storage(operation: &str, q: Option<usize>, queue: FileQueue, ctx: egui::Context) {
+    let operation = operation.to_owned();
+    std::thread::spawn(move || {
+        deliver(
+            &queue,
+            &ctx,
+            FileEvent::Storage(flight_core::native_parameters::manage(&operation, q)),
+        );
+    });
+}
+#[cfg(target_arch = "wasm32")]
+pub fn storage(operation: &str, q: Option<usize>, queue: FileQueue, ctx: egui::Context) {
+    use wasm_bindgen::prelude::*;
+    #[wasm_bindgen(js_namespace = flightBridge)]
+    extern "C" {
+        #[wasm_bindgen(catch, js_name = manageStorage)]
+        async fn manage_storage(operation: &str, q: u32) -> Result<JsValue, JsValue>;
+    }
+    let operation = operation.to_owned();
+    spawn(async move {
+        let result = match manage_storage(&operation, q.unwrap_or(0) as u32).await {
+            Ok(v) => serde_json::from_str(&v.as_string().unwrap_or_default())
+                .map_err(|_| "缓存信息无效".into()),
+            Err(e) => Err(e.as_string().unwrap_or_else(|| "无法读取参数缓存".into())),
+        };
+        deliver(&queue, &ctx, FileEvent::Storage(result));
+    });
+}

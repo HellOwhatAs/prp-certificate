@@ -111,6 +111,10 @@ pub struct FlightApp {
     dirty: bool,
     confirm_clear: bool,
     imports_paused: bool,
+    storage_open: bool,
+    storage_busy: bool,
+    storage_state: Option<Value>,
+    storage_error: String,
 }
 impl FlightApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -199,6 +203,10 @@ impl FlightApp {
             dirty: true,
             confirm_clear: false,
             imports_paused: false,
+            storage_open: false,
+            storage_busy: false,
+            storage_state: None,
+            storage_error: String::new(),
         }
     }
     fn busy(&self) -> bool {
@@ -225,6 +233,10 @@ impl FlightApp {
         json!({"action": action, "q": q+1, "team": self.team.trim(), "files": files})
     }
     fn send(&mut self, kind: Kind, payload: Value, import: Option<Pending>) -> bool {
+        if self.storage_busy {
+            self.show_error("正在处理参数缓存，请稍后重试");
+            return false;
+        }
         match self.backend.send(payload) {
             Ok(()) => {
                 self.task = Some(Task { kind, import });
@@ -243,7 +255,7 @@ impl FlightApp {
         combine_questions(&self.questions, &self.team)
     }
     fn check_question(&mut self, q: usize) {
-        if self.busy() {
+        if self.busy() || self.storage_busy {
             return;
         }
         self.questions[q].error.clear();
@@ -257,7 +269,7 @@ impl FlightApp {
         self.send(Kind::Check(q), self.payload("check", q), None);
     }
     fn generate_certificate(&mut self, ctx: &egui::Context) {
-        if self.busy() {
+        if self.busy() || self.storage_busy {
             return;
         }
         let team = self.team.trim();
@@ -307,7 +319,7 @@ impl FlightApp {
         self.next_batch(ctx);
     }
     fn next_batch(&mut self, ctx: &egui::Context) {
-        if self.task.is_some() {
+        if self.task.is_some() || self.storage_busy {
             return;
         }
         let Some(batch) = self.batch.as_mut() else {
@@ -333,13 +345,16 @@ impl FlightApp {
             self.add_record(item);
             self.status = "证书已生成".into();
             self.error = false;
+            if self.storage_open {
+                self.request_storage("list", None, ctx);
+            }
         } else {
             self.show_error("证书未生成");
         }
         self.dirty = true;
         self.refresh_draft(ctx);
     }
-    fn cancel(&mut self) {
+    fn cancel(&mut self, ctx: &egui::Context) {
         self.backend.cancel();
         if let Some(task) = self.task.take() {
             if let Some(import) = task.import {
@@ -352,9 +367,12 @@ impl FlightApp {
         self.error = false;
         self.progress.clear();
         self.dirty = true;
+        if self.storage_open {
+            self.request_storage("list", None, ctx);
+        }
     }
     fn next_import(&mut self) {
-        if self.busy() || self.imports_paused {
+        if self.busy() || self.storage_busy || self.imports_paused {
             return;
         }
         if let Some(p) = self.pending.pop_front() {
@@ -494,6 +512,16 @@ impl FlightApp {
                     self.status = format!("已导出 {name}");
                     self.error = false;
                 }
+                FileEvent::Storage(result) => {
+                    self.storage_busy = false;
+                    match result {
+                        Ok(state) => {
+                            self.storage_state = Some(state);
+                            self.storage_error.clear();
+                        }
+                        Err(e) => self.storage_error = e,
+                    }
+                }
                 FileEvent::Error(e) => self.show_error(e),
             }
         }
@@ -535,6 +563,9 @@ impl FlightApp {
                         }
                     }
                     self.progress.clear();
+                    if self.storage_open {
+                        self.request_storage("list", None, ctx);
+                    }
                 }
                 Some("result") => {
                     let Some(task) = self.task.take() else {
@@ -629,10 +660,14 @@ impl FlightApp {
                     }
                     self.progress.clear();
                     self.next_batch(ctx);
+                    if self.storage_open && !self.busy() {
+                        self.request_storage("list", None, ctx);
+                    }
                 }
                 _ => {}
             }
         }
+        self.next_batch(ctx);
         self.next_import();
         self.refresh_draft(ctx);
     }
@@ -749,18 +784,21 @@ impl FlightApp {
     fn question_buttons(&mut self, ui: &mut egui::Ui, q: usize) {
         // Right-to-left layout keeps the primary check button at the right edge.
         let check = ui
-            .add_enabled_ui(self.questions[q].has_files() && !self.busy(), |ui| {
-                let visuals = ui.visuals_mut();
-                visuals.widgets.inactive.weak_bg_fill = ACCENT;
-                visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(23, 133, 119);
-                visuals.widgets.active.weak_bg_fill = Color32::from_rgb(19, 94, 84);
-                ui.add_sized(
-                    [64.0, 36.0],
-                    egui::Button::new(RichText::new("校验").size(14.0).color(Color32::WHITE))
-                        .corner_radius(5),
-                )
-                .clicked()
-            })
+            .add_enabled_ui(
+                self.questions[q].has_files() && !self.busy() && !self.storage_busy,
+                |ui| {
+                    let visuals = ui.visuals_mut();
+                    visuals.widgets.inactive.weak_bg_fill = ACCENT;
+                    visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(23, 133, 119);
+                    visuals.widgets.active.weak_bg_fill = Color32::from_rgb(19, 94, 84);
+                    ui.add_sized(
+                        [64.0, 36.0],
+                        egui::Button::new(RichText::new("校验").size(14.0).color(Color32::WHITE))
+                            .corner_radius(5),
+                    )
+                    .clicked()
+                },
+            )
             .inner;
         if check {
             self.check_question(q);
@@ -828,7 +866,9 @@ impl FlightApp {
             );
             let generate = ui
                 .add_enabled_ui(
-                    !self.busy() && self.questions.iter().any(Question::active),
+                    !self.busy()
+                        && !self.storage_busy
+                        && self.questions.iter().any(Question::active),
                     |ui| {
                         ui.add_sized(
                             size,
@@ -1153,13 +1193,202 @@ impl FlightApp {
             x += width + gap;
         }
     }
+    fn request_storage(&mut self, operation: &str, q: Option<usize>, ctx: &egui::Context) {
+        if self.storage_busy || (operation != "list" && self.busy()) {
+            return;
+        }
+        self.storage_busy = true;
+        self.storage_error.clear();
+        platform::storage(operation, q, self.file_events.clone(), ctx.clone());
+    }
+    fn storage_button(&mut self, ui: &mut egui::Ui) {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(40.0, 44.0), egui::Sense::click());
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "存储管理"));
+        let visuals = ui.style().interact(&response);
+        if response.hovered() || response.has_focus() || self.storage_open {
+            ui.painter()
+                .rect_filled(rect.shrink(2.0), 5.0, visuals.weak_bg_fill);
+        }
+        let center = rect.center();
+        // Draw the gear directly so the icon does not depend on font coverage.
+        let points: Vec<_> = (0..32)
+            .map(|i| {
+                let angle = std::f32::consts::TAU * i as f32 / 32.0;
+                let radius = if i % 4 == 0 || i % 4 == 3 { 8.0 } else { 10.5 };
+                center + egui::vec2(angle.cos(), angle.sin()) * radius
+            })
+            .collect();
+        ui.painter().add(egui::Shape::closed_line(
+            points,
+            egui::Stroke::new(1.6, INK),
+        ));
+        ui.painter()
+            .circle_stroke(center, 3.4, egui::Stroke::new(1.6, INK));
+        if response.on_hover_text("存储管理").clicked() {
+            self.storage_open = !self.storage_open;
+            if self.storage_open {
+                self.request_storage("list", None, ui.ctx());
+            }
+        }
+    }
+    fn storage_window(&mut self, ctx: &egui::Context) {
+        if !self.storage_open {
+            return;
+        }
+        let mut close = false;
+        let modal = egui::Modal::new(egui::Id::new("storage-management"))
+            .backdrop_color(Color32::from_black_alpha(60))
+            .frame(
+                egui::Frame::window(&ctx.style())
+                    .fill(Color32::WHITE)
+                    .inner_margin(16),
+            )
+            .show(ctx, |ui| {
+                ui.set_width((ctx.content_rect().width() - 64.0).clamp(230.0, 450.0));
+                let (header, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 44.0),
+                    egui::Sense::hover(),
+                );
+                ui.painter().text(
+                    header.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "存储管理",
+                    egui::FontId::proportional(24.0),
+                    INK,
+                );
+                let close_rect = egui::Rect::from_min_size(
+                    egui::pos2(header.right() - 44.0, header.top()),
+                    egui::vec2(44.0, 44.0),
+                );
+                let response = ui.interact(
+                    close_rect,
+                    egui::Id::new("storage-close"),
+                    egui::Sense::click(),
+                );
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "关闭存储管理")
+                });
+                if response.hovered()
+                    || response.has_focus()
+                    || response.is_pointer_button_down_on()
+                {
+                    let fill = if response.is_pointer_button_down_on() {
+                        Color32::from_rgb(211, 225, 218)
+                    } else {
+                        Color32::from_rgb(231, 239, 235)
+                    };
+                    ui.painter().rect_filled(close_rect, 5.0, fill);
+                }
+                for direction in [-1.0, 1.0] {
+                    let offset = egui::vec2(6.0, direction * 6.0);
+                    ui.painter().line_segment(
+                        [close_rect.center() - offset, close_rect.center() + offset],
+                        egui::Stroke::new(1.6, INK),
+                    );
+                }
+                close = response.clicked();
+                ui.add_space(8.0);
+                if self.storage_busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("处理中…");
+                    });
+                    return;
+                }
+                if let Some(state) = self.storage_state.clone() {
+                    if state["available"] == false {
+                        ui.colored_label(MUTED, "浏览器未开放缓存存储。");
+                    }
+                    if let Some(rows) = state["rows"].as_array() {
+                        for row in rows {
+                            let q = row["q"].as_u64().unwrap_or(1) as usize;
+                            let bytes = row["bytes"].as_u64().unwrap_or(0);
+                            let cached = row["cached_bytes"].as_u64().unwrap_or(0);
+                            let total = row["total_bytes"].as_u64().unwrap_or(0);
+                            let card = egui::Frame::new()
+                                .fill(Color32::from_rgb(245, 248, 247))
+                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(211, 225, 218)))
+                                .corner_radius(8)
+                                .inner_margin(14);
+                            let content_width =
+                                (ui.available_width() - card.total_margin().sum().x).max(0.0);
+                            card.show(ui, |ui| {
+                                ui.set_min_width(content_width);
+                                ui.horizontal(|ui| {
+                                    let text_width =
+                                        (ui.available_width() - 64.0 - ui.spacing().item_spacing.x)
+                                            .max(0.0);
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(text_width, 44.0),
+                                        egui::Layout::top_down(egui::Align::Min),
+                                        |ui| {
+                                            ui.set_min_width(text_width);
+                                            ui.spacing_mut().item_spacing.y = 4.0;
+                                            ui.label(
+                                                RichText::new(
+                                                    ["第一问", "第二问", "第三问"]
+                                                        [q.saturating_sub(1).min(2)],
+                                                )
+                                                .strong(),
+                                            );
+                                            let size = if bytes == 0 {
+                                                "未缓存".to_owned()
+                                            } else if total > 0 && cached == total {
+                                                format!("已缓存 {:.1} MB", cached as f64 / 1e6)
+                                            } else {
+                                                format!(
+                                                    "部分缓存 {:.1} / {:.1} MB",
+                                                    cached as f64 / 1e6,
+                                                    total as f64 / 1e6
+                                                )
+                                            };
+                                            ui.label(RichText::new(size).size(14.0).color(MUTED));
+                                        },
+                                    );
+                                    if ui
+                                        .add_enabled(
+                                            bytes > 0 && !self.busy() && !self.storage_busy,
+                                            egui::Button::new("删除")
+                                                .corner_radius(5)
+                                                .min_size(egui::vec2(64.0, 36.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.request_storage("delete", Some(q), ctx);
+                                    }
+                                });
+                            });
+                        }
+                    }
+                }
+                if !self.storage_error.is_empty() {
+                    ui.colored_label(RED, &self.storage_error);
+                    if ui
+                        .add_enabled(
+                            !self.storage_busy && !self.busy(),
+                            egui::Button::new("重试"),
+                        )
+                        .clicked()
+                    {
+                        self.request_storage("list", None, ctx);
+                    }
+                }
+            });
+        if close || modal.should_close() {
+            self.storage_open = false;
+        }
+    }
     fn navigation_buttons(&mut self, ui: &mut egui::Ui, width: f32) {
         ui.spacing_mut().button_padding = egui::vec2(8.0, 8.0);
         for (i, label) in ["生成证书", "验证证书", "证书记录"].iter().enumerate() {
             if ui
                 .add_sized(
                     [width, 44.0],
-                    egui::Button::selectable(self.page == i, *label),
+                    egui::Button::selectable(
+                        self.page == i,
+                        RichText::new(*label).size(if width < 80.0 { 14.0 } else { 16.0 }),
+                    ),
                 )
                 .clicked()
             {
@@ -1176,7 +1405,7 @@ impl FlightApp {
             .size()
             .x;
         let width = ui.available_width();
-        if width >= title_width + 32.0 + 3.0 * 96.0 + 24.0 {
+        if width >= title_width + 32.0 + 3.0 * 96.0 + 24.0 + 56.0 {
             ui.allocate_ui_with_layout(
                 egui::vec2(width, 44.0),
                 egui::Layout::left_to_right(egui::Align::Center),
@@ -1184,6 +1413,8 @@ impl FlightApp {
                     ui.label(title());
                     ui.add_space(20.0);
                     self.navigation_buttons(ui, 96.0);
+                    ui.add_space((ui.available_width() - 44.0).max(0.0));
+                    self.storage_button(ui);
                 },
             );
         } else {
@@ -1192,7 +1423,9 @@ impl FlightApp {
                 egui::vec2(width, 44.0),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    self.navigation_buttons(ui, ((width - 24.0) / 3.0).min(120.0));
+                    self.navigation_buttons(ui, ((width - 80.0) / 3.0).min(120.0));
+                    ui.add_space((ui.available_width() - 44.0).max(0.0));
+                    self.storage_button(ui);
                 },
             );
         }
@@ -1212,11 +1445,19 @@ impl eframe::App for FlightApp {
                     .fill(Color32::WHITE)
                     .inner_margin(egui::Margin::symmetric(24, 18)),
             )
-            .show(ctx, |ui| self.navigation(ui));
+            .show(ctx, |ui| {
+                if self.storage_open {
+                    ui.disable();
+                }
+                self.navigation(ui);
+            });
         if self.busy() || !self.status.is_empty() {
             egui::TopBottomPanel::bottom("status")
                 .frame(egui::Frame::new().fill(Color32::WHITE).inner_margin(14))
                 .show(ctx, |ui| {
+                    if self.storage_open {
+                        ui.disable();
+                    }
                     if self.busy() {
                         // Reserve the complete row before placing its differently sized widgets.
                         // Long progress messages yield space to the cancel button, never another row.
@@ -1240,7 +1481,7 @@ impl eframe::App for FlightApp {
                                     .add_sized([72.0, 40.0], egui::Button::new("取消"))
                                     .clicked()
                                 {
-                                    self.cancel();
+                                    self.cancel(ctx);
                                 }
                             },
                         );
@@ -1256,6 +1497,9 @@ impl eframe::App for FlightApp {
                     .inner_margin(egui::Margin::symmetric(24, 0)),
             )
             .show(ctx, |ui| {
+                if self.storage_open {
+                    ui.disable();
+                }
                 let mut scroll = egui::ScrollArea::vertical()
                     .id_salt(("page-scroll", self.page))
                     .auto_shrink([false, false]);
@@ -1273,11 +1517,15 @@ impl eframe::App for FlightApp {
                     ui.add_space(24.0);
                 });
             });
+        self.storage_window(ctx);
         if self.confirm_clear {
             egui::Window::new("清空记录")
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
+                    if self.storage_open {
+                        ui.disable();
+                    }
                     ui.label("清空本机证书记录？");
                     ui.horizontal(|ui| {
                         if ui.button("清空").clicked() {
@@ -1320,6 +1568,169 @@ impl eframe::App for FlightApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn storage_modal_blocks_navigation_and_close_has_a_full_hoverable_hit_area() {
+        use eframe::App;
+        let ctx = egui::Context::default();
+        let mut app = FlightApp::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
+        ctx.style_mut(|style| style.animation_time = 0.0);
+        let draw = |app: &mut FlightApp, events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1024.0, 768.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| app.update(ctx, &mut eframe::Frame::_new_kittest()),
+            )
+        };
+        for _ in 0..3 {
+            draw(&mut app, vec![]);
+        }
+        let output = draw(&mut app, vec![]);
+        let navigation = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "验证证书" => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .expect("navigation button");
+        let pointer = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        app.storage_open = true;
+        for _ in 0..3 {
+            draw(&mut app, vec![]);
+        }
+        draw(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(navigation),
+                pointer(navigation, true),
+            ],
+        );
+        draw(&mut app, vec![pointer(navigation, false)]);
+        assert_eq!(app.page, 0, "the modal must block background navigation");
+        app.storage_open = true;
+        for _ in 0..3 {
+            draw(&mut app, vec![]);
+        }
+        let close = ctx
+            .read_response(egui::Id::new("storage-close"))
+            .unwrap()
+            .rect;
+        assert_eq!(close.size(), egui::vec2(44.0, 44.0));
+        let corner = close.left_top() + egui::vec2(3.0, 3.0);
+        let hovered = draw(&mut app, vec![egui::Event::PointerMoved(corner)]);
+        assert!(
+            hovered.shapes.iter().any(|shape| matches!(
+                &shape.shape, egui::Shape::Rect(rect)
+                    if rect.rect == close && rect.fill == Color32::from_rgb(231, 239, 235)
+            )),
+            "hover fills the whole close button"
+        );
+        draw(&mut app, vec![pointer(corner, true)]);
+        draw(&mut app, vec![pointer(corner, false)]);
+        assert!(
+            !app.storage_open,
+            "clicking outside the X but inside its button closes the modal"
+        );
+        draw(&mut app, vec![egui::Event::PointerMoved(navigation)]);
+        draw(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(navigation),
+                pointer(navigation, true),
+            ],
+        );
+        draw(&mut app, vec![pointer(navigation, false)]);
+        assert_eq!(app.page, 1, "background navigation resumes after closing");
+    }
+
+    #[test]
+    fn storage_window_fits_narrow_and_wide_views() {
+        for width in [320.0, 400.0, 1024.0] {
+            let ctx = egui::Context::default();
+            let mut app = FlightApp::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
+            app.storage_open = true;
+            app.storage_state = Some(json!({"available":true,"rows":[
+                {"q":1,"bytes":228524311,"cached_bytes":228524311,"total_bytes":228524311},
+                {"q":2,"bytes":4194304,"cached_bytes":4194304,"total_bytes":428391940},
+                {"q":3,"bytes":0,"cached_bytes":0,"total_bytes":455938453}
+            ]}));
+            ctx.style_mut(|style| style.animation_time = 0.0);
+            let mut output = None;
+            for _ in 0..3 {
+                output = Some(ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 768.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::TopBottomPanel::top("navigation")
+                            .frame(
+                                egui::Frame::new()
+                                    .fill(Color32::WHITE)
+                                    .inner_margin(egui::Margin::symmetric(24, 18)),
+                            )
+                            .show(ctx, |ui| app.navigation(ui));
+                        egui::CentralPanel::default().show(ctx, |_| {});
+                        app.storage_window(ctx);
+                    },
+                ));
+            }
+            fn texts(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+                match shape {
+                    egui::Shape::Text(text) => {
+                        out.push((text.galley.text().to_owned(), text.visual_bounding_rect()))
+                    }
+                    egui::Shape::Vec(shapes) => {
+                        for shape in shapes {
+                            texts(shape, out);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let output = output.unwrap();
+            let mut labels = vec![];
+            for shape in &output.shapes {
+                texts(&shape.shape, &mut labels);
+            }
+            for expected in [
+                "存储管理",
+                "第一问",
+                "第二问",
+                "第三问",
+                "已缓存 228.5 MB",
+                "部分缓存 4.2 / 428.4 MB",
+                "未缓存",
+            ] {
+                assert!(
+                    labels.iter().any(|(text, _)| text == expected),
+                    "{width}: missing {expected}"
+                );
+            }
+            for (text, rect) in &labels {
+                assert!(
+                    rect.left() >= -1.0 && rect.right() <= width + 1.0,
+                    "{width}: clipped {text} at {rect:?}"
+                );
+            }
+        }
+    }
     fn proof(q: usize) -> Verified {
         let c = flight_format::Certificate {
             metadata: flight_format::Metadata::new(

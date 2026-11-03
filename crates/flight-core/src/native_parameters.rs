@@ -1,10 +1,12 @@
 //! Fetch only authenticated public proving components. No solution data leaves the machine.
+mod storage;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+pub use storage::manage;
 
 #[derive(Clone, Deserialize)]
 struct Part {
@@ -92,25 +94,6 @@ fn cache_root() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".cache")));
     base.map(|p| p.join("prp-flight").join("parameters"))
 }
-fn local_directories() -> Vec<PathBuf> {
-    let mut roots = vec![];
-    if let Some(p) = std::env::var_os("FLIGHT_HOME") {
-        roots.push(PathBuf::from(p));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            roots.extend(parent.ancestors().take(5).map(Path::to_path_buf));
-        }
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        roots.push(cwd);
-    }
-    roots
-        .into_iter()
-        .map(|p| p.join("public/groth16"))
-        .collect()
-}
-
 // Only a complete, hash-checked chunk is committed. Parallel app instances may
 // download the same chunk; they never observe each other's partial writes.
 fn cache_part(directory: &Path, part: &Part, bytes: &[u8]) -> Result<(), String> {
@@ -167,7 +150,6 @@ fn download(agent: &ureq::Agent, url: &str, part: &Part) -> Result<Vec<u8>, Stri
 fn load(
     q: u64,
     info: &Parameters,
-    local: &[PathBuf],
     cache: Option<&Path>,
     mut fetch: impl FnMut(&Part) -> Result<Vec<u8>, String>,
     progress: &mut impl FnMut(&str),
@@ -183,14 +165,9 @@ fn load(
         info.pk_bytes.div_ceil(1_000_000)
     ));
     for part in &info.chunks {
-        let saved = local
-            .iter()
-            .find_map(|p| part.read(&p.join(&part.file)))
-            .or_else(|| {
-                directory
-                    .as_ref()
-                    .and_then(|p| part.read(&p.join(&part.file)))
-            });
+        let saved = directory
+            .as_ref()
+            .and_then(|p| part.read(&p.join(&part.file)));
         let downloaded = saved.is_none();
         let bytes = if let Some(bytes) = saved {
             bytes
@@ -218,7 +195,7 @@ fn load(
         out.extend_from_slice(&bytes);
         progress(&format!(
             "{}证明组件 {} / {} MB…",
-            if downloaded { "下载" } else { "读取本地" },
+            if downloaded { "下载" } else { "读取缓存" },
             out.len().div_ceil(1_000_000),
             info.pk_bytes.div_ceil(1_000_000)
         ));
@@ -230,6 +207,20 @@ fn load(
 }
 
 pub(crate) fn read(q: u64, progress: &mut impl FnMut(&str)) -> Result<Vec<u8>, String> {
+    let mut root = cache_root();
+    let _lock = match root
+        .as_deref()
+        .map(|root| storage::lock(root, false))
+        .transpose()
+    {
+        Ok(lock) => lock,
+        Err(error) if error == storage::BUSY => return Err(error),
+        Err(_) => {
+            root = None;
+            progress("无法保存参数缓存，本次下载仍可继续");
+            None
+        }
+    };
     let info: Parameters =
         serde_json::from_value(super::engine::manifest()["circuits"][q.to_string()].clone())
             .map_err(|_| "证明组件清单无效")?;
@@ -245,8 +236,7 @@ pub(crate) fn read(q: u64, progress: &mut impl FnMut(&str)) -> Result<Vec<u8>, S
     load(
         q,
         &info,
-        &local_directories(),
-        cache_root().as_deref(),
+        root.as_deref(),
         |part| {
             let url = format!("{}{}", env!("FLIGHT_PARAMETER_BASE_URL"), part.file);
             let mut last = String::new();
@@ -283,7 +273,7 @@ mod tests {
         let url = format!("{}{}", env!("FLIGHT_PARAMETER_BASE_URL"), part.file);
         assert!(part.valid(&download(&agent, &url, part).unwrap()));
     }
-    fn fixture() -> (Parameters, Vec<Vec<u8>>) {
+    pub(super) fn fixture() -> (Parameters, Vec<Vec<u8>>) {
         let bytes = vec![
             b"first public component".to_vec(),
             b"second public component".to_vec(),
@@ -312,7 +302,6 @@ mod tests {
         let all = load(
             1,
             &info,
-            &[],
             Some(cache.path()),
             |_| {
                 let value = bytes[calls].clone();
@@ -328,7 +317,6 @@ mod tests {
             load(
                 1,
                 &info,
-                &[],
                 Some(cache.path()),
                 |_| panic!("unexpected network"),
                 &mut |_| {}
@@ -347,7 +335,6 @@ mod tests {
             load(
                 1,
                 &info,
-                &[],
                 Some(cache.path()),
                 |_| {
                     calls += 1;
@@ -366,7 +353,6 @@ mod tests {
         let all = load(
             1,
             &info,
-            &[],
             Some(cache.path()),
             |part| {
                 assert_eq!(part.file, "q1-1.dat");
@@ -381,7 +367,6 @@ mod tests {
             load(
                 1,
                 &info,
-                &[],
                 Some(cache.path()),
                 |part| {
                     assert_eq!(part.file, "q1-0.dat");
@@ -396,26 +381,6 @@ mod tests {
         assert_eq!(std::fs::read_dir(directory).unwrap().count(), 2);
     }
     #[test]
-    fn manual_parameters_work_offline_without_external_manifest() {
-        let (info, bytes) = fixture();
-        let local = tempfile::tempdir().unwrap();
-        for (part, bytes) in info.chunks.iter().zip(&bytes) {
-            std::fs::write(local.path().join(&part.file), bytes).unwrap();
-        }
-        assert_eq!(
-            load(
-                1,
-                &info,
-                &[local.path().to_owned()],
-                None,
-                |_| panic!("unexpected network"),
-                &mut |_| {}
-            )
-            .unwrap(),
-            bytes.concat()
-        );
-    }
-    #[test]
     fn forged_or_malformed_parameters_are_not_accepted() {
         let (mut info, bytes) = fixture();
         let cache = tempfile::tempdir().unwrap();
@@ -423,7 +388,6 @@ mod tests {
             load(
                 1,
                 &info,
-                &[],
                 Some(cache.path()),
                 |p| Ok(vec![0; p.bytes]),
                 &mut |_| {}
@@ -436,7 +400,6 @@ mod tests {
             load(
                 1,
                 &info,
-                &[],
                 None,
                 |_| panic!("unexpected network"),
                 &mut |_| {}
@@ -450,7 +413,6 @@ mod tests {
             load(
                 1,
                 &info,
-                &[],
                 None,
                 |_| {
                     let b = bytes[next].clone();
@@ -474,7 +436,6 @@ mod tests {
             load(
                 1,
                 &info,
-                &[],
                 Some(&cache),
                 |_| {
                     let b = bytes[next].clone();
