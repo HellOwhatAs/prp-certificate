@@ -141,7 +141,7 @@ node scripts/test-web-release.mjs .cache/public-proof-results/q1.json
 
 | 检查 | PR / Pages | Release 发布前 |
 | --- | --- | --- |
-| Rust 核心、公开 Q1 校验、真实固定密钥证书与篡改 | 执行 | 六个平台执行 |
+| Rust 核心、进度恢复/文件导入状态、公开 Q1 与真实证书篡改 | 执行 | 六个平台执行 |
 | Q1/Q2/Q3 完整矩阵与固定初始化摘要一致 | 执行 | 执行 |
 | 从源码构建 UI、单线程和多线程 WASM | 执行 | 执行 |
 | 构建后的证书验证、QR 导入、线程启动/回退/取消 | 执行 | 执行 |

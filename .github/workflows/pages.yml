@@ -32,8 +32,10 @@ jobs:
       - name: Reproduce the public feasible Q1 fixture
         run: node scripts/generate-public-fixture.mjs --check
       - run: npm test
-      - name: Test native core, public solution and real certificate regressions
-        run: cargo test --locked --release -p flight-core -p flight-format
+      - name: Install native UI test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev pkg-config
+      - name: Test workspace, proof recovery and real certificate regressions
+        run: cargo test --locked --release --workspace
       - name: Check all three full circuit matrices against the pinned setup
         run: cargo test --locked --release -p flight-core all_circuit_matrices_match_pinned_setup -- --ignored
       - run: node scripts/test-thread-policy.mjs
