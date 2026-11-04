@@ -23,8 +23,8 @@ for q in range(1,4):
             raise SystemExit(f'Invalid complete Q{q} parameters')
     print(archive.resolve())
 
-folders=['.github','assets','circuits','crates','public','scripts','src','tests','web','web-dist','docs']
-root_files=['.gitignore','.gitattributes','Cargo.toml','Cargo.lock','package.json','package-lock.json']
+folders=['.github','assets','circuits','crates','public','scripts','src','tests','web','docs']
+root_files=['.gitignore','.gitattributes','Cargo.toml','Cargo.lock','rust-toolchain.toml','package.json','package-lock.json']
 files=[Path(name) for name in root_files if Path(name).is_file()]
 files+=list(Path('.').glob('*.md'))
 for folder in folders:

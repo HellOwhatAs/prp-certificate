@@ -207,8 +207,8 @@ pub fn fmt(n: u64) -> String {
         })
         .collect()
 }
-/// The certificate image and verification details use the same labels, units and rounding.
-pub fn score_metrics(q: usize, s: &[u64]) -> [(&'static str, String); 5] {
+/// Common metrics keep the same positions for all three questions.
+pub fn score_metrics(s: &[u64]) -> [(&'static str, String); 5] {
     let util = (s[5] * 10000 + s[6] / 2) / s[6];
     [
         ("总飞机使用时间", format!("{} 分钟", fmt(s[0]))),
@@ -218,12 +218,13 @@ pub fn score_metrics(q: usize, s: &[u64]) -> [(&'static str, String); 5] {
             "总燃油消耗",
             format!("{}.{:01} kg", fmt(s[2] / 10), s[2] % 10),
         ),
-        if q == 3 {
-            ("临时任务完成", format!("{} / 160 人", s[7]))
-        } else {
-            ("人员在途时间", format!("{} 分钟", fmt(s[1])))
-        },
+        ("人员在途时间", format!("{} 分钟", fmt(s[1]))),
     ]
+}
+
+/// Q3's additional outcome is displayed separately from the common metric grid.
+pub fn temporary_tasks(s: &[u64]) -> String {
+    format!("{} / 160 人", fmt(s[7]))
 }
 pub fn render(item: &Verified) -> Result<Vec<u8>, String> {
     let set = item.set()?;
@@ -286,12 +287,25 @@ fn draw(p: &mut [u8], team: &str, scores: &[Option<Vec<u64>>; 3]) {
         text(p, "总飞机使用时间", 140, top as i32 + 192, 27.0, grey);
         fitted(p, &fmt(s[0]), 140, top as i32 + 295, 88.0, 500.0, ink);
         text(p, "分钟", 140, top as i32 + 344, 25.0, grey);
-        let metrics = score_metrics(q + 1, s);
+        let metrics = score_metrics(s);
         for (i, (label, value)) in metrics[1..].iter().enumerate() {
             let x = if i % 2 == 0 { 770 } else { 1130 };
             let y = top as i32 + 186 + (i / 2) as i32 * 134;
             text(p, label, x, y, 25.0, grey);
             fitted(p, value, x, y + 54, 35.0, 324.0, ink);
+        }
+        if q == 2 {
+            rect(p, 140, top + 399, 1320, 1, [220, 224, 211]);
+            text(p, "临时任务完成", 140, top as i32 + 435, 25.0, grey);
+            fitted(
+                p,
+                &temporary_tasks(s),
+                1130,
+                top as i32 + 435,
+                30.0,
+                324.0,
+                ink,
+            );
         }
     }
     rect(p, 140, 1790, 1320, 2, rule);

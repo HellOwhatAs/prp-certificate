@@ -7,6 +7,20 @@ const testDir=process.env.ZK_TEST_DIR||'.cache/zk-tests';
 assert.throws(()=>parseCSV('a,b\n1,2,3',['a','b']));
 assert.throws(()=>parseCSV('a,b\n"bad',['a','b']));
 assert.deepEqual(parseCSV('\uFEFFa,b\r\n"1","2"\r\n',['a','b'])[0],{a:'1',b:'2',_line:2});
+const publicRoutes=await fs.readFile('tests/fixtures/public/q1-routes.csv','utf8');
+const publicAssignments=await fs.readFile('tests/fixtures/public/q1-assignments.csv','utf8');
+const publicExpected=JSON.parse(await fs.readFile('tests/fixtures/public/q1-expected.json'));
+const publicResult=checkSolution(D,1,publicRoutes,publicAssignments);
+assert.equal(publicResult.ok,true,publicResult.errors?.join('\n'));
+assert.deepEqual(publicResult.score,publicExpected.scores);
+assert.equal(publicResult.totals.served,publicExpected.served);
+assert.equal(toWitness(publicResult,new Uint8Array(32)).served.length,D.people[1].length);
+assert.equal(checkSolution(D,1,publicRoutes,publicAssignments+publicAssignments.split('\n')[1]+'\n').ok,false);
+assert.equal(checkSolution(D,1,publicRoutes,publicAssignments.replace('P0002','UNKNOWN')).ok,false);
+const publicRows=publicAssignments.trim().split('\n');
+assert.equal(checkSolution(D,1,publicRoutes,publicRows.slice(0,-1).join('\n')).ok,false);
+assert.equal(checkSolution(D,1,publicRoutes.replace(',1,0,',',1.5,0,'),publicAssignments).ok,false);
+console.log('Public Q1: all 1600 people served, pinned metrics match; malformed solutions rejected');
 if(dir){
  for(const q of [1,2,3]){
   const r=await fs.readFile(`${dir}/q${q}-routes.csv`,'utf8'),a=await fs.readFile(`${dir}/q${q}-assignments.csv`,'utf8');
@@ -25,4 +39,4 @@ if(dir){
   await fs.writeFile(`${testDir}/q${q}-witness.json`,JSON.stringify(toWitness(result,new Uint8Array(32))));
   console.log(`Q${q}: original metrics match; malformed solutions rejected`);
  }
-}else console.log('CSV tests passed. Set REFERENCE_DIR to the private trial_solve folder for full regression.');
+}else console.log('SKIP private Q1/Q2/Q3 organizer regression: REFERENCE_DIR is not set (public Q1 and CSV tests passed).');

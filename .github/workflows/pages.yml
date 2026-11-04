@@ -1,6 +1,7 @@
 name: Deploy GitHub Pages
 on:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -12,6 +13,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      RAYON_NUM_THREADS: '4'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,17 +25,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: ./.github/actions/setup-web-build
       - run: npm ci
       - name: Validate data and every public parameter chunk
         run: python scripts/test-parameter-integrity.py
+      - name: Reproduce the public feasible Q1 fixture
+        run: node scripts/generate-public-fixture.mjs --check
       - run: npm test
+      - name: Test native core, public solution and real certificate regressions
+        run: cargo test --locked --release -p flight-core -p flight-format
+      - name: Check all three full circuit matrices against the pinned setup
+        run: cargo test --locked --release -p flight-core all_circuit_matrices_match_pinned_setup -- --ignored
       - run: node scripts/test-thread-policy.mjs
       - run: node scripts/test-parameters.mjs
       - run: node scripts/test-storage.mjs
-      - name: Assemble checked-in WASM and pin parameter URLs to this commit
+      - name: Compile UI, single-thread and multi-thread WASM from source
+        run: npm run build:rust
+      - name: Pin parameter URLs to this commit
         run: npm run build:pages
       - run: node scripts/test-pages-build.mjs
       - run: node scripts/test-web-preflight.mjs
+      - name: Verify real public certificates and QR import with the built WASM
+        run: node scripts/test-web-release.mjs
       - run: npm install --no-save --package-lock=false playwright@1.62.1
       - run: npx playwright install --with-deps chromium
       - name: Test project-path isolation, threading and fallback in Chromium

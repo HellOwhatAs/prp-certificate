@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing version tag, for example v0.4.6'
+        description: 'Existing version tag, for example v0.4.7'
         required: true
         type: string
 permissions:
@@ -32,7 +32,7 @@ jobs:
           import os, re, subprocess
           tag=os.environ['RELEASE_TAG']
           if not re.fullmatch(r'v[0-9][A-Za-z0-9._-]*',tag):
-              raise SystemExit('Expected a version tag such as v0.4.6')
+              raise SystemExit('Expected a version tag such as v0.4.7')
           sha=subprocess.check_output(['git','rev-parse','--verify',f'refs/tags/{tag}^{{commit}}'],text=True).strip()
           head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           if head != sha:
@@ -72,7 +72,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
@@ -97,6 +97,9 @@ jobs:
   common:
     needs: resolve
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RAYON_NUM_THREADS: '4'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,17 +111,41 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: ./.github/actions/setup-web-build
       - run: npm ci
       - run: python scripts/test-parameter-integrity.py
+      - name: Reproduce the public Q1 generation fixture
+        run: node scripts/generate-public-fixture.mjs --check --job .cache/public-regression/job-q1.json
       - run: npm test
+      - name: Check all three full circuit matrices against the pinned setup
+        run: cargo test --locked --release -p flight-core all_circuit_matrices_match_pinned_setup -- --ignored
+      - name: Build native proof regression tools
+        run: cargo build --locked --release -p flight-core --bin flight-engine --example groth_regression
+      - name: Verify all committed real certificates and reject tampering
+        run: python scripts/test-certificates.py
+      - name: Generate and verify a real Q1 proof with fixed public parameters
+        run: python scripts/test-proof-regression.py --fixtures .cache/public-regression --questions 1 --output .cache/public-proof-results
+      - run: node scripts/test-thread-policy.mjs
       - run: node scripts/test-parameters.mjs
       - run: node scripts/test-storage.mjs
+      - name: Compile UI, single-thread and multi-thread WASM from source
+        run: npm run build:rust
+      - run: npm install --no-save --package-lock=false playwright@1.62.1
+      - run: npx playwright install --with-deps chromium
+      - name: Generate Q1 in Chromium with parallel and single-thread engines
+        # Use the local authenticated chunks before Pages rewrites their URLs.
+        # The same compiled WASM is assembled into the download below.
+        run: node scripts/test-web-threads.mjs --job .cache/public-regression/job-q1.json --threads 4 --modes parallel,single --report .cache/public-browser-regression.json
       - name: Build static Pages download from the same release commit
         env:
           RELEASE_COMMIT: ${{ needs.resolve.outputs.sha }}
         run: npm run build:pages -- --ref "$RELEASE_COMMIT"
       - run: node scripts/test-pages-build.mjs
       - run: node scripts/test-web-preflight.mjs
+      - name: Verify committed certificates and import their QR images in built WASM
+        run: node scripts/test-web-release.mjs
+      - name: Cross-verify the newly generated native proof in built WASM
+        run: node scripts/test-web-release.mjs .cache/public-proof-results/q1.json
       - name: Package common parameters, source and static website
         run: python scripts/package-common.py
       - uses: actions/upload-artifact@v4
@@ -163,7 +190,7 @@ jobs:
 
           - 下载对应系统的程序包并解压；验证证书不需要大参数。
           - 首次生成某一问时，程序自动从 GitHub 下载对应证明参数并缓存；后续复用缓存，下载中断后可重试。
-          - 离线使用时，可将 prp-flight-parameters-qN.zip 内的 public 文件夹合并到程序目录。三问参数跨平台通用。
+          - 离线使用时，将 `prp-flight-parameters-qN.zip` 中对应问的 `.dat` 分片放入统一参数缓存的 `<pk_sha256>/` 子目录；路径与哈希见随包 README.md 的“缓存位置”。三问参数跨平台通用。
           - prp-certificate-source.zip 包含源码与部署说明；参数由三个独立参数包提供。
           - prp-certificate-pages.zip 是静态网站文件；公开参数地址固定到本次发布提交。
           - SHA256SUMS.txt 提供所有附件的 SHA-256。程序未作 Windows / Apple 开发者签名。
@@ -172,4 +199,4 @@ jobs:
             gh release create "$RELEASE_TAG" --verify-tag --target "$RELEASE_SHA" --draft --title "$RELEASE_TAG" --notes-file release-notes.md
           fi
           gh release upload "$RELEASE_TAG" release/* --clobber
-          gh release edit "$RELEASE_TAG" --draft=false
+          gh release edit "$RELEASE_TAG" --draft=false --notes-file release-notes.md

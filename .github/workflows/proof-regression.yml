@@ -1,0 +1,52 @@
+name: Full Q1 Q2 Q3 proof regression (private fixtures)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: full-proof-regression-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  full-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      RAYON_NUM_THREADS: '4'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Require all three private fixtures before running tests
+        env:
+          PRP_REGRESSION_FIXTURE_URL: ${{ secrets.PRP_REGRESSION_FIXTURE_URL }}
+          PRP_REGRESSION_FIXTURE_SHA256: ${{ secrets.PRP_REGRESSION_FIXTURE_SHA256 }}
+        run: python scripts/fetch-regression-fixtures.py "$RUNNER_TEMP/prp-regression-fixtures"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: ./.github/actions/setup-web-build
+      - run: npm ci
+      - run: python scripts/test-parameter-integrity.py
+      - name: Check all three matrices and build native regression tools
+        run: |
+          cargo test --locked --release -p flight-core all_circuit_matrices_match_pinned_setup -- --ignored
+          cargo build --locked --release -p flight-core --bin flight-engine --example groth_regression
+      - name: Run full native Q1 Q2 Q3 proof and mutation regressions
+        run: python scripts/test-proof-regression.py --fixtures "$RUNNER_TEMP/prp-regression-fixtures" --questions 1,2,3 --output .cache/private-proof-results
+      - name: Compile browser engines from the selected source commit
+        run: npm run build:rust
+      - name: Cross-verify all native results and QR imports in built WASM
+        run: node scripts/test-web-release.mjs .cache/private-proof-results/q1.json .cache/private-proof-results/q2.json .cache/private-proof-results/q3.json
+      - run: npm install --no-save --package-lock=false playwright@1.62.1
+      - run: npx playwright install --with-deps chromium
+      - name: Generate all three questions in both browser engines
+        run: |
+          for q in 1 2 3; do
+            node scripts/test-web-threads.mjs --job "$RUNNER_TEMP/prp-regression-fixtures/job-q${q}.json" --threads 4 --modes parallel,single --report ".cache/private-browser-q${q}.json"
+          done
+      # Never upload or cache private CSV inputs, certificates or screenshots.
+      - name: Remove private regression inputs and outputs
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/prp-regression-fixtures" .cache/private-proof-results .cache/web-release .cache/private-browser-q*.json

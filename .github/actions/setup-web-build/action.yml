@@ -1,0 +1,17 @@
+name: Set up pinned browser build tools
+description: Install the exact Rust and wasm-bindgen versions used by browser builds.
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@1.99.1
+      with:
+        targets: wasm32-unknown-unknown
+    - name: Install pinned threaded WASM toolchain
+      shell: bash
+      run: rustup toolchain install nightly-2025-11-15 --profile minimal --component rust-src --target wasm32-unknown-unknown
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: web-1.99.1-nightly-2025-11-15-bindgen-0.2.105
+    - name: Install matching wasm-bindgen
+      shell: bash
+      run: cargo install wasm-bindgen-cli --version 0.2.105 --locked

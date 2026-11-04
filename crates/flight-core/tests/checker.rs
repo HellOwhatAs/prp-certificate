@@ -22,12 +22,107 @@ fn csv_rejects_ambiguous_or_unbounded_input() {
     );
 }
 
-/// Uses private organizer fixtures only when explicitly supplied; never bundles them.
 #[test]
+fn public_q1_reference_regression() {
+    let routes = include_str!("../../../tests/fixtures/public/q1-routes.csv");
+    let assignments = include_str!("../../../tests/fixtures/public/q1-assignments.csv");
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/public/q1-expected.json"
+    ))
+    .unwrap();
+    let checked = check(1, routes, assignments, false).unwrap();
+    assert_eq!(serde_json::json!(checked.score), expected["scores"]);
+    assert!(checked.can_prove());
+
+    let rows: Vec<_> = assignments.trim().lines().collect();
+    assert!(check(1, routes, &rows[..rows.len() - 1].join("\n"), false).is_err());
+    assert!(
+        check(
+            1,
+            routes,
+            &format!("{}\n{}", assignments.trim(), rows[1]),
+            false
+        )
+        .is_err()
+    );
+    assert!(
+        check(
+            1,
+            routes,
+            &assignments.replacen("P0002", "UNKNOWN", 1),
+            false
+        )
+        .is_err()
+    );
+    assert!(
+        check(
+            1,
+            &routes.replacen(",1,0,", ",1.5,0,", 1),
+            assignments,
+            false
+        )
+        .is_err()
+    );
+    assert!(check(1, &routes.replacen(",A01,", ",A02,", 1), assignments, false).is_err());
+}
+
+#[test]
+fn public_certificate_uses_the_fixed_verification_key() {
+    use serde_json::{Value, json};
+    let original: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/certificates/public-q1.json"
+    ))
+    .unwrap();
+    let certificate = &original["certificate"];
+    let verified = flight_core::verify_certificate(certificate.clone(), |_| {}).unwrap();
+    assert_eq!(verified, original);
+    let expected: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/public/q1-expected.json"
+    ))
+    .unwrap();
+    assert_eq!(verified["scores"][0], expected["scores"]);
+
+    for score in 0..9 {
+        let mut changed = certificate.clone();
+        let value = changed["certificates"][0]["scores"][score]
+            .as_u64()
+            .unwrap();
+        changed["certificates"][0]["scores"][score] = json!(value + 1);
+        assert!(
+            flight_core::verify_certificate(changed, |_| {}).is_err(),
+            "score {score}"
+        );
+    }
+    for (field, value) in [
+        ("team", json!("Forged team")),
+        ("nonce", json!("00000000-0000-4000-8000-000000000000")),
+        ("question", json!(2)),
+        ("dataset", json!("untrusted dataset")),
+        ("rules", json!("untrusted rules")),
+    ] {
+        let mut changed = certificate.clone();
+        changed["certificates"][0]["metadata"][field] = value;
+        assert!(
+            flight_core::verify_certificate(changed, |_| {}).is_err(),
+            "metadata {field}"
+        );
+    }
+    let mut changed = certificate.clone();
+    changed["certificates"][0]["vk"] = json!("certificate-supplied keys must never be trusted");
+    assert!(flight_core::verify_certificate(changed, |_| {}).is_err());
+    let mut changed = certificate.clone();
+    let mut second = certificate["certificates"][0].clone();
+    second["metadata"]["question"] = json!(2);
+    changed["certificates"].as_array_mut().unwrap().push(second);
+    assert!(flight_core::verify_certificate(changed, |_| {}).is_err());
+}
+
+/// Private organizer fixtures are deliberately absent from the public source.
+#[test]
+#[ignore = "requires REFERENCE_DIR with private Q1/Q2/Q3 organizer fixtures"]
 fn private_reference_regression() {
-    let Ok(dir) = std::env::var("REFERENCE_DIR") else {
-        return;
-    };
+    let dir = std::env::var("REFERENCE_DIR")
+        .expect("set REFERENCE_DIR before explicitly running private_reference_regression");
     for q in 1..=3 {
         let routes = std::fs::read_to_string(format!("{dir}/q{q}-routes.csv")).unwrap();
         let assignments = std::fs::read_to_string(format!("{dir}/q{q}-assignments.csv")).unwrap();
