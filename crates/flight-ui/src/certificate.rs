@@ -289,22 +289,38 @@ fn draw(p: &mut [u8], team: &str, scores: &[Option<Vec<u64>>; 3]) {
             continue;
         };
         let objectives = score_objectives(q + 1, s);
-        let (label_y, value_y, unit_y, size, unit_size) = if objectives.len() == 1 {
-            (192, 295, 344, 88.0, 25.0)
-        } else {
-            (144, 214, 250, 56.0, 23.0)
-        };
         // Both objectives use the same fitted size, even for unusually long scores.
-        let widest = objectives
-            .iter()
-            .map(|(_, value, _)| text_width(value, size))
-            .fold(1.0, f32::max);
-        let value_size = size * (500.0 / widest).min(1.0);
+        let fitted_size = |widths: [f32; 2]| {
+            objectives
+                .iter()
+                .zip(widths)
+                .map(|((_, value, _), width)| {
+                    88.0 * (width / text_width(value, 88.0).max(1.0)).min(1.0)
+                })
+                .fold(88.0, f32::min)
+        };
+        let horizontal_size = fitted_size(if objectives.len() == 1 {
+            [500.0, 240.0]
+        } else {
+            [300.0, 240.0]
+        });
+        // Keep long objectives prominent by giving each the full left column.
+        let stacked = objectives.len() == 2 && horizontal_size < 72.0;
+        let value_size = if stacked {
+            fitted_size([500.0; 2])
+        } else {
+            horizontal_size
+        };
         for (i, (label, value, unit)) in objectives.iter().enumerate() {
-            let y = top as i32 + i as i32 * 160;
-            text(p, label, 140, y + label_y, 27.0, grey);
-            text(p, value, 140, y + value_y, value_size, ink);
-            text(p, unit, 140, y + unit_y, unit_size, grey);
+            let (x, label_y, value_y, unit_y) = if stacked {
+                let dy = i as i32 * 164;
+                (140, 136 + dy, 222 + dy, 262 + dy)
+            } else {
+                (140 + i as i32 * 340, 192, 295, 344)
+            };
+            text(p, label, x, top as i32 + label_y, 27.0, grey);
+            text(p, value, x, top as i32 + value_y, value_size, ink);
+            text(p, unit, x, top as i32 + unit_y, 25.0, grey);
         }
         for (i, (label, value)) in score_metrics(s).iter().enumerate() {
             let x = if i % 2 == 0 { 770 } else { 1130 };
