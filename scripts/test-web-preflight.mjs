@@ -40,7 +40,7 @@ const temporary=d.people[3].find(p=>p.task==='temporary').id;
 const required=d.people[3].find(p=>p.task!=='temporary').id;
 for(const action of ['check','prove']){
  for(const [assignments,expected,person] of [
-  ['invalid',/人员分配表：表头/,''],
+  ['invalid',/人员分配表：CSV 第 1 行表头不一致/,''],
   [header+`${temporary},${plane},,,`,/填写不完整.*全部留空/,temporary],
   [header+`${required},,,,`,/必运人员.*不能为空/,required],
   [header+`${temporary},,,,`,/遗漏.*全部人员记录.*保留 person_id/,'']

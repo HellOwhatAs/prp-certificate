@@ -3,7 +3,7 @@ use crate::platform::{self, Backend, FileEvent, FileQueue};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use eframe::egui::{self, Color32, RichText};
 use serde_json::{Value, json};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 const ACCENT: Color32 = Color32::from_rgb(27, 118, 106);
@@ -17,6 +17,8 @@ const NAMES: [&str; 3] = [
 ];
 const SLOT_KEYS: [&str; 2] = ["routes", "assignments"];
 const SAVE_KEY: &str = "prp-combined-certificates-v1";
+const LEGACY_DRAFT_KEY: &str = "prp-generation-draft-v1";
+const MAX_RECORDS: usize = 200;
 
 #[derive(Default)]
 struct CsvFile {
@@ -70,10 +72,15 @@ struct Task {
     kind: Kind,
     import: Option<Pending>,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImportSource {
+    File,
+    Record,
+}
 struct Pending {
     imported: Imported,
     name: String,
-    stored: bool,
+    source: ImportSource,
 }
 struct Batch {
     checks: VecDeque<usize>,
@@ -109,6 +116,7 @@ pub struct FlightApp {
     import_failures: Vec<ImportFailure>,
     ready: Option<Verified>,
     dirty: bool,
+    checkpoint_pending: bool,
     confirm_clear: bool,
     imports_paused: bool,
     storage_open: bool,
@@ -165,23 +173,7 @@ impl FlightApp {
             .text_styles
             .insert(egui::TextStyle::Heading, egui::FontId::proportional(25.0));
         cc.egui_ctx.set_style_of(egui::Theme::Light, style);
-        let saved: Vec<Value> = cc
-            .storage
-            .and_then(|s| eframe::get_value(s, SAVE_KEY))
-            .unwrap_or_default();
-        let pending = saved
-            .into_iter()
-            .take(200)
-            .map(|certificate| Pending {
-                imported: Imported {
-                    certificate,
-                    original: None,
-                },
-                name: "已保存证书".into(),
-                stored: true,
-            })
-            .collect();
-        Self {
+        let mut app = Self {
             page: 0,
             editing_record: None,
             reset_scroll: false,
@@ -195,18 +187,73 @@ impl FlightApp {
             status: String::new(),
             error: false,
             records: vec![],
-            pending,
+            pending: VecDeque::new(),
             draft_texture: None,
             review: None,
             import_failures: vec![],
             ready: None,
             dirty: true,
+            checkpoint_pending: false,
             confirm_clear: false,
             imports_paused: false,
             storage_open: false,
             storage_busy: false,
             storage_state: None,
             storage_error: String::new(),
+        };
+        if let Some(storage) = cc.storage {
+            app.restore_state(storage);
+        }
+        app
+    }
+    fn restore_state(&mut self, storage: &dyn eframe::Storage) {
+        // Only completed records survive a restart. A new generation form is empty.
+        let saved: Vec<Value> = eframe::get_value(storage, SAVE_KEY).unwrap_or_default();
+        self.pending.extend(
+            saved
+                .into_iter()
+                .take(MAX_RECORDS)
+                .map(|certificate| Pending {
+                    imported: Imported {
+                        certificate,
+                        original: None,
+                    },
+                    name: "已保存证书".into(),
+                    source: ImportSource::Record,
+                }),
+        );
+    }
+    fn stored_records(&self) -> Vec<Value> {
+        // records and the recovery queue are both newest-first. The in-flight
+        // record precedes the queue, including when saving during verification.
+        let mut certs: Vec<Value> = self.records.iter().map(|r| r.certificate.clone()).collect();
+        certs.extend(
+            self.task
+                .iter()
+                .filter_map(|task| task.import.as_ref())
+                .chain(self.pending.iter())
+                .filter(|p| p.source == ImportSource::Record)
+                .map(|p| p.imported.certificate.clone()),
+        );
+        let mut seen = HashSet::new();
+        certs.retain(|value| {
+            flight_format::CertificateSet::from_value(value)
+                .and_then(|set| set.id())
+                .map_or(true, |id| seen.insert(id))
+        });
+        certs.truncate(MAX_RECORDS);
+        certs
+    }
+    fn save_state(&self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, SAVE_KEY, &self.stored_records());
+        // Discard progress left by the earlier partial-draft implementation.
+        storage.set_string(LEGACY_DRAFT_KEY, String::new());
+    }
+    fn flush_checkpoint(&mut self, storage: &mut dyn eframe::Storage) {
+        if self.checkpoint_pending {
+            self.save_state(storage);
+            storage.flush();
+            self.checkpoint_pending = false;
         }
     }
     fn busy(&self) -> bool {
@@ -220,8 +267,17 @@ impl FlightApp {
         let id = item.id();
         if !self.records.iter().any(|r| r.id() == id) {
             self.records.insert(0, item);
-            self.records.truncate(200);
+            self.records.truncate(MAX_RECORDS);
+            self.checkpoint_pending = true;
         }
+    }
+    fn restore_record(&mut self, item: Verified) {
+        if !self.records.iter().any(|r| r.id() == item.id()) {
+            self.records.push(item);
+            self.records.truncate(MAX_RECORDS);
+        }
+        // Moving a verified record out of the recovery queue leaves the saved
+        // order and contents unchanged, so it does not need a checkpoint.
     }
     fn payload(&self, action: &str, q: usize) -> Value {
         let files: serde_json::Map<_, _> = self.questions[q]
@@ -245,6 +301,10 @@ impl FlightApp {
                 true
             }
             Err(e) => {
+                if let Some(import) = import {
+                    self.pending.push_front(import);
+                    self.imports_paused = true;
+                }
                 self.batch = None;
                 self.show_error(e);
                 false
@@ -301,8 +361,14 @@ impl FlightApp {
                 return;
             }
             if question.proof_for(&self.team).is_none() && !question.complete_files() {
-                question.error = "队伍署名与证书不一致，请重新选择方案文件".into();
-                self.show_error(format!("第 {} 问：队伍署名与证书不一致", q + 1));
+                question.error = if question.proof.is_some() {
+                    "队伍署名与证书不一致，请重新选择方案文件"
+                } else {
+                    "请选择完整的航线表和人员分配表以继续生成"
+                }
+                .into();
+                let error = format!("第 {} 问：{}", q + 1, question.error);
+                self.show_error(error);
                 return;
             }
             if question.complete_files() && question.proof_for(&self.team).is_none() {
@@ -339,6 +405,14 @@ impl FlightApp {
                 // A renamed draft creates a new record; it never rewrites the original team's certificate.
                 self.records
                     .retain(|record| record.id() != previous || record.team() != item.team());
+                self.pending.retain(|p| {
+                    p.source != ImportSource::Record
+                        || !flight_format::CertificateSet::from_value(&p.imported.certificate)
+                            .is_ok_and(|set| {
+                                set.team() == item.team()
+                                    && set.id().ok().as_deref() == Some(previous.as_str())
+                            })
+                });
                 self.editing_record = Some(item.id());
             }
             self.ready = Some(item.clone());
@@ -363,6 +437,7 @@ impl FlightApp {
         }
         self.batch = None;
         self.imports_paused = true;
+        self.checkpoint_pending = true;
         self.status = "已取消".into();
         self.error = false;
         self.progress.clear();
@@ -376,7 +451,7 @@ impl FlightApp {
             return;
         }
         if let Some(p) = self.pending.pop_front() {
-            if !p.stored {
+            if p.source == ImportSource::File {
                 self.review = None;
             }
             let payload = if p.imported.certificate.is_null() {
@@ -408,6 +483,62 @@ impl FlightApp {
         self.ready = None;
         self.dirty = true;
         self.status.clear();
+    }
+    fn accept_proof(&mut self, q: usize, item: Verified) -> Result<(), String> {
+        let set = item.set()?;
+        if set.certificates.len() != 1
+            || item.question() != (q + 1) as u64
+            || item.team() != self.team.trim()
+        {
+            return Err("证明结果与当前方案不一致".into());
+        }
+        self.questions[q].proof = Some(item);
+        self.questions[q].error.clear();
+        self.dirty = true;
+        Ok(())
+    }
+    fn accept_import(
+        &mut self,
+        p: &Pending,
+        item: Verified,
+        ctx: &egui::Context,
+    ) -> Result<(), String> {
+        item.set()?;
+        if !p.imported.certificate.is_null() {
+            certificate::check_document(&p.imported, &item)?;
+        }
+        let item = Verified::combine(&[item])?;
+        match p.source {
+            ImportSource::Record => self.restore_record(item),
+            ImportSource::File => {
+                self.add_record(item.clone());
+                self.set_review(item, Some(p.name.clone()), ctx);
+                self.status = "验证通过".into();
+                self.error = false;
+            }
+        }
+        Ok(())
+    }
+    fn reject_import(&mut self, p: Pending, error: String) {
+        self.checkpoint_pending = true;
+        self.set_review_error(p.name, error);
+    }
+    fn fail_task(&mut self, task: Task, error: String) {
+        match task.kind {
+            Kind::Check(q) | Kind::Prove(q) => {
+                self.questions[q].error = error.clone();
+                self.batch = None;
+                self.show_error(format!("第 {} 问：{error}", q + 1));
+                self.dirty = true;
+                self.checkpoint_pending = true;
+            }
+            Kind::Import => {
+                if let Some(p) = task.import {
+                    self.reject_import(p, error.clone());
+                }
+                self.show_error(error);
+            }
+        }
     }
     fn texture(ctx: &egui::Context, key: &str, pixels: &[u8]) -> egui::TextureHandle {
         ctx.load_texture(
@@ -466,14 +597,20 @@ impl FlightApp {
     }
     fn receive(&mut self, ctx: &egui::Context) {
         let files = std::mem::take(&mut *self.file_events.lock().unwrap());
-        if files
-            .iter()
-            .any(|event| matches!(event, FileEvent::Loaded { slot: 6, .. }))
-        {
-            self.import_failures.clear();
-        }
         for event in files {
             match event {
+                FileEvent::SelectionStarted { slot: 6 } => self.import_failures.clear(),
+                FileEvent::SelectionStarted { .. } => {}
+                FileEvent::LoadError {
+                    slot: 6,
+                    name,
+                    message,
+                } => {
+                    self.set_review_error(name, message);
+                }
+                FileEvent::LoadError { name, message, .. } => {
+                    self.show_error(format!("{name}：{message}"));
+                }
                 FileEvent::Loaded { slot, name, bytes } if slot == 6 => {
                     if bytes.len() > 16_000_000 {
                         self.set_review_error(name, "证书图片不能超过 16 MB".into());
@@ -484,7 +621,7 @@ impl FlightApp {
                                 original: Some(bytes),
                             },
                             name,
-                            stored: false,
+                            source: ImportSource::File,
                         });
                         self.imports_paused = false;
                     }
@@ -547,20 +684,7 @@ impl FlightApp {
                 Some("error") => {
                     let error = message["message"].as_str().unwrap_or("计算失败").to_owned();
                     if let Some(task) = self.task.take() {
-                        match task.kind {
-                            Kind::Check(q) | Kind::Prove(q) => {
-                                self.questions[q].error = error.clone();
-                                self.batch = None;
-                                self.show_error(format!("第 {} 问：{error}", q + 1));
-                                self.dirty = true;
-                            }
-                            Kind::Import => {
-                                if let Some(p) = task.import {
-                                    self.set_review_error(p.name, error.clone());
-                                }
-                                self.show_error(error);
-                            }
-                        }
+                        self.fail_task(task, error);
                     }
                     self.progress.clear();
                     if self.storage_open {
@@ -608,53 +732,21 @@ impl FlightApp {
                             self.dirty = true;
                         }
                         Kind::Prove(q) => {
-                            match serde_json::from_value::<Verified>(result.clone())
+                            if let Err(e) = serde_json::from_value::<Verified>(result.clone())
                                 .map_err(|e| e.to_string())
-                                .and_then(|v| {
-                                    v.set()?;
-                                    Ok(v)
-                                }) {
-                                Ok(item)
-                                    if item.question() == (q + 1) as u64
-                                        && item.team() == self.team.trim() =>
-                                {
-                                    self.questions[q].proof = Some(item);
-                                    self.questions[q].error.clear();
-                                    self.dirty = true;
-                                }
-                                Ok(_) => {
-                                    self.batch = None;
-                                    self.show_error("证明结果与当前方案不一致");
-                                }
-                                Err(e) => {
-                                    self.batch = None;
-                                    self.show_error(e);
-                                }
+                                .and_then(|item| self.accept_proof(q, item))
+                            {
+                                self.batch = None;
+                                self.show_error(e);
                             }
                         }
                         Kind::Import => {
                             let p = task.import.unwrap();
-                            let verified = serde_json::from_value::<Verified>(result.clone())
+                            if let Err(e) = serde_json::from_value::<Verified>(result.clone())
                                 .map_err(|e| e.to_string())
-                                .and_then(|v| {
-                                    v.set()?;
-                                    if !p.imported.certificate.is_null() {
-                                        certificate::check_document(&p.imported, &v)?;
-                                    }
-                                    Verified::combine(&[v])
-                                });
-                            match verified {
-                                Ok(item) => {
-                                    self.add_record(item.clone());
-                                    if !p.stored {
-                                        self.set_review(item, Some(p.name), ctx);
-                                        self.status = "验证通过".into();
-                                        self.error = false;
-                                    }
-                                }
-                                Err(e) => {
-                                    self.set_review_error(p.name, e);
-                                }
+                                .and_then(|item| self.accept_import(&p, item, ctx))
+                            {
+                                self.reject_import(p, e);
                             }
                         }
                     }
@@ -962,7 +1054,10 @@ impl FlightApp {
                         } else {
                             16.0
                         };
-                        for (label, value) in certificate::score_metrics(q, scores) {
+                        let objectives = certificate::score_objectives(q, scores)
+                            .into_iter()
+                            .map(|(label, value, unit)| (label, format!("{value} {unit}")));
+                        for (label, value) in objectives.chain(certificate::score_metrics(scores)) {
                             ui.columns(2, |cols| {
                                 cols[0].label(RichText::new(label).size(font_size).color(MUTED));
                                 cols[1].with_layout(
@@ -1221,10 +1316,10 @@ impl FlightApp {
             .collect();
         ui.painter().add(egui::Shape::closed_line(
             points,
-            egui::Stroke::new(1.6, INK),
+            egui::Stroke::new(1.6_f32, INK),
         ));
         ui.painter()
-            .circle_stroke(center, 3.4, egui::Stroke::new(1.6, INK));
+            .circle_stroke(center, 3.4, egui::Stroke::new(1.6_f32, INK));
         if response.on_hover_text("存储管理").clicked() {
             self.storage_open = !self.storage_open;
             if self.storage_open {
@@ -1284,7 +1379,7 @@ impl FlightApp {
                     let offset = egui::vec2(6.0, direction * 6.0);
                     ui.painter().line_segment(
                         [close_rect.center() - offset, close_rect.center() + offset],
-                        egui::Stroke::new(1.6, INK),
+                        egui::Stroke::new(1.6_f32, INK),
                     );
                 }
                 close = response.clicked();
@@ -1308,7 +1403,10 @@ impl FlightApp {
                             let total = row["total_bytes"].as_u64().unwrap_or(0);
                             let card = egui::Frame::new()
                                 .fill(Color32::from_rgb(245, 248, 247))
-                                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(211, 225, 218)))
+                                .stroke(egui::Stroke::new(
+                                    1.0_f32,
+                                    Color32::from_rgb(211, 225, 218),
+                                ))
                                 .corner_radius(8)
                                 .inner_margin(14);
                             let content_width =
@@ -1432,7 +1530,7 @@ impl FlightApp {
     }
 }
 impl eframe::App for FlightApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.receive(ctx);
         ctx.request_repaint_after(std::time::Duration::from_millis(if self.busy() {
             100
@@ -1531,6 +1629,7 @@ impl eframe::App for FlightApp {
                         if ui.button("清空").clicked() {
                             self.records.clear();
                             self.pending.clear();
+                            self.checkpoint_pending = true;
                             self.review = None;
                             self.import_failures.clear();
                             self.confirm_clear = false;
@@ -1541,24 +1640,12 @@ impl eframe::App for FlightApp {
                     });
                 });
         }
+        if let Some(storage) = frame.storage_mut() {
+            self.flush_checkpoint(storage);
+        }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        let mut certs: Vec<Value> = self.records.iter().map(|r| r.certificate.clone()).collect();
-        certs.extend(
-            self.pending
-                .iter()
-                .filter(|p| p.stored)
-                .map(|p| p.imported.certificate.clone()),
-        );
-        if let Some(p) = self
-            .task
-            .as_ref()
-            .and_then(|t| t.import.as_ref())
-            .filter(|p| p.stored)
-        {
-            certs.push(p.imported.certificate.clone());
-        }
-        eframe::set_value(storage, SAVE_KEY, &certs);
+        self.save_state(storage);
     }
     fn auto_save_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(3)
@@ -1568,10 +1655,30 @@ impl eframe::App for FlightApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn test_context() -> egui::Context {
+        let ctx = egui::Context::default();
+        ctx.input_mut(|input| input.max_texture_side = 4096);
+        ctx
+    }
+    fn finish_generation(app: &mut FlightApp, ctx: &egui::Context) {
+        for _ in 0..6 {
+            let Some(task) = app.task.as_ref() else { break };
+            let result = match task.kind {
+                Kind::Check(_) => json!({"scores":vec![vec![1u64;9]],"canProve":true}),
+                Kind::Prove(q) => serde_json::to_value(proof(q + 1)).unwrap(),
+                Kind::Import => panic!("unexpected import during generation"),
+            };
+            app.backend.reply(json!({"type":"result","result":result}));
+            app.receive(ctx);
+        }
+        assert!(!app.busy(), "generation did not finish: {}", app.status);
+        assert_eq!(app.status, "证书已生成");
+        assert!(app.ready.is_some());
+    }
     #[test]
     fn storage_modal_blocks_navigation_and_close_has_a_full_hoverable_hit_area() {
         use eframe::App;
-        let ctx = egui::Context::default();
+        let ctx = test_context();
         let mut app = FlightApp::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
         ctx.style_mut(|style| style.animation_time = 0.0);
         let draw = |app: &mut FlightApp, events| {
@@ -1659,7 +1766,7 @@ mod tests {
     #[test]
     fn storage_window_fits_narrow_and_wide_views() {
         for width in [320.0, 400.0, 1024.0] {
-            let ctx = egui::Context::default();
+            let ctx = test_context();
             let mut app = FlightApp::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
             app.storage_open = true;
             app.storage_state = Some(json!({"available":true,"rows":[
@@ -1773,5 +1880,384 @@ mod tests {
         assert!(questions[2].proof.is_some());
         assert!(combine_questions(&questions, "甲").is_none());
         assert!(combine_questions(&Default::default(), "甲").is_none());
+    }
+
+    #[test]
+    fn batch_file_read_failures_survive_later_frames_and_successful_imports() {
+        let ctx = test_context();
+        let mut app = application(None);
+        // Hold backend work while delivering one picker selection over two frames.
+        app.storage_busy = true;
+        app.file_events.lock().unwrap().extend([
+            FileEvent::SelectionStarted { slot: 6 },
+            FileEvent::LoadError {
+                slot: 6,
+                name: "oversized.png".into(),
+                message: "证书图片不能超过 16 MB".into(),
+            },
+        ]);
+        app.receive(&ctx);
+        assert_eq!(app.import_failures.len(), 1);
+        app.file_events.lock().unwrap().push(FileEvent::Loaded {
+            slot: 6,
+            name: "valid.png".into(),
+            bytes: vec![],
+        });
+        app.receive(&ctx);
+        assert_eq!(
+            app.import_failures.len(),
+            1,
+            "later files must not reset the batch"
+        );
+        let pending = app.pending.pop_front().unwrap();
+        // As in the recovery tests, this is an explicit synthetic engine result.
+        app.accept_import(&pending, proof(1), &ctx).unwrap();
+        assert!(app.review.is_some());
+        assert_eq!(app.import_failures[0].name, "oversized.png");
+        assert!(app.import_failures[0].message.contains("16 MB"));
+        app.file_events
+            .lock()
+            .unwrap()
+            .push(FileEvent::SelectionStarted { slot: 6 });
+        app.receive(&ctx);
+        assert!(
+            app.import_failures.is_empty(),
+            "a new selection resets old failures once"
+        );
+    }
+
+    #[derive(Default)]
+    struct MemoryStorage {
+        values: std::collections::HashMap<String, String>,
+        flushes: usize,
+    }
+    impl eframe::Storage for MemoryStorage {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.values.get(key).cloned()
+        }
+        fn set_string(&mut self, key: &str, value: String) {
+            self.values.insert(key.to_owned(), value);
+        }
+        fn flush(&mut self) {
+            self.flushes += 1;
+        }
+    }
+    fn application(storage: Option<&dyn eframe::Storage>) -> FlightApp {
+        let mut cc = eframe::CreationContext::_new_kittest(test_context());
+        cc.storage = storage;
+        FlightApp::new(&cc)
+    }
+    fn distinct_proof(q: usize, n: u16, team: &str) -> Verified {
+        let mut item = proof(q);
+        let mut nonce = [0; 16];
+        nonce[..2].copy_from_slice(&n.to_le_bytes());
+        item.certificate["certificates"][0]["metadata"]["nonce"] =
+            json!(flight_format::nonce(&nonce));
+        item.certificate["certificates"][0]["metadata"]["team"] = json!(team);
+        item
+    }
+    // Synthetic engine responses exercise UI state transitions only. They must
+    // never be accepted merely by loading storage: every test explicitly sends
+    // a verification success/failure through the same completion handlers.
+    fn verification_result(document: &Value) -> Verified {
+        let set = flight_format::CertificateSet::from_value(document).unwrap();
+        Verified {
+            certificate: document.clone(),
+            scores: set
+                .certificates
+                .iter()
+                .map(|c| c.scores.iter().map(|v| *v as u64).collect())
+                .collect(),
+        }
+    }
+    fn finish_next_recovery(app: &mut FlightApp) {
+        let p = app.pending.pop_front().unwrap();
+        let result = verification_result(&p.imported.certificate);
+        app.accept_import(&p, result, &test_context()).unwrap();
+    }
+    fn empty_batch() -> Batch {
+        Batch {
+            checks: VecDeque::new(),
+            proofs: VecDeque::new(),
+        }
+    }
+    fn csv_pair(marker: &str) -> [CsvFile; 2] {
+        std::array::from_fn(|slot| CsvFile {
+            name: format!("PRIVATE-{slot}.csv"),
+            text: marker.to_owned(),
+        })
+    }
+    #[test]
+    fn legacy_draft_must_not_force_unselected_questions_into_generation() {
+        let ctx = test_context();
+        let mut storage = MemoryStorage::default();
+        // Exact RON stored by the removed draft implementation, including stale selections.
+        storage.values.insert(
+            LEGACY_DRAFT_KEY.into(),
+            r#"(team:"甲",editing_record:None,active:(true,true,true),proofs:(None,None,None))"#
+                .into(),
+        );
+        for mask in 1..=7 {
+            let mut app = application(Some(&storage));
+            app.team = "甲".into();
+            for q in 0..3 {
+                if mask & (1 << q) != 0 {
+                    app.accept_proof(q, proof(q + 1)).unwrap();
+                }
+            }
+            app.generate_certificate(&ctx);
+            assert_eq!(app.status, "证书已生成", "question mask {mask}");
+            let item = app.ready.as_ref().unwrap();
+            for q in 0..3 {
+                assert_eq!(item.score_for(q + 1).is_some(), mask & (1 << q) != 0);
+            }
+        }
+    }
+    #[test]
+    fn csv_selection_generates_exactly_the_selected_question_subset() {
+        let ctx = test_context();
+        for mask in 0..=7 {
+            let mut app = application(None);
+            app.team = "甲".into();
+            let selected: Vec<_> = (0..3).filter(|q| mask & (1 << q) != 0).collect();
+            for &q in &selected {
+                for slot in 0..2 {
+                    app.file_events.lock().unwrap().push(FileEvent::Loaded {
+                        slot: q * 2 + slot,
+                        name: format!("q{}-{slot}.csv", q + 1),
+                        bytes: b"private CSV input".to_vec(),
+                    });
+                }
+            }
+            app.receive(&ctx);
+            app.generate_certificate(&ctx);
+            if selected.is_empty() {
+                assert!(app.error);
+                assert!(app.backend.requests.is_empty());
+                assert!(app.ready.is_none());
+                continue;
+            }
+            finish_generation(&mut app, &ctx);
+            let requests: Vec<_> = app
+                .backend
+                .requests
+                .iter()
+                .map(|r| (r["action"].as_str().unwrap(), r["q"].as_u64().unwrap()))
+                .collect();
+            let expected: Vec<_> = ["check", "prove"]
+                .into_iter()
+                .flat_map(|action| selected.iter().map(move |q| (action, (q + 1) as u64)))
+                .collect();
+            assert_eq!(requests, expected, "question mask {mask}");
+            let item = app.ready.as_ref().unwrap();
+            for q in 0..3 {
+                assert_eq!(item.score_for(q + 1).is_some(), selected.contains(&q));
+            }
+        }
+    }
+    #[test]
+    fn incomplete_current_input_blocks_generation_until_explicitly_cleared() {
+        let ctx = test_context();
+        let mut app = application(None);
+        app.team = "甲".into();
+        app.accept_proof(0, proof(1)).unwrap();
+        app.questions[1].files[0] = CsvFile {
+            name: "routes.csv".into(),
+            text: "unfinished current input".into(),
+        };
+        app.generate_certificate(&ctx);
+        assert!(app.error && app.status.starts_with("第 2 问"));
+        assert!(app.ready.is_none());
+        assert!(app.backend.requests.is_empty());
+        app.questions[1] = Question::default();
+        app.invalidate_generated();
+        app.generate_certificate(&ctx);
+        assert_eq!(app.status, "证书已生成");
+        assert!(app.ready.as_ref().unwrap().score_for(1).is_some());
+        assert!(app.ready.as_ref().unwrap().score_for(2).is_none());
+    }
+    #[test]
+    fn record_order_survives_repeated_restart_and_in_flight_save() {
+        let mut storage = MemoryStorage::default();
+        let expected: Vec<_> = [3, 2, 1]
+            .map(|n| distinct_proof(1, n, "甲").certificate)
+            .to_vec();
+        eframe::set_value(&mut storage, SAVE_KEY, &expected);
+        for _ in 0..3 {
+            let mut app = application(Some(&storage));
+            assert!(
+                app.records.is_empty(),
+                "stored records require verification"
+            );
+            finish_next_recovery(&mut app);
+            assert!(
+                !app.checkpoint_pending,
+                "restoring unchanged records does not rewrite storage"
+            );
+            let p = app.pending.pop_front().unwrap();
+            app.task = Some(Task {
+                kind: Kind::Import,
+                import: Some(p),
+            });
+            app.save_state(&mut storage);
+            assert_eq!(
+                eframe::get_value::<Vec<Value>>(&storage, SAVE_KEY).unwrap(),
+                expected
+            );
+            app.cancel(&test_context());
+            app.flush_checkpoint(&mut storage);
+            assert_eq!(
+                eframe::get_value::<Vec<Value>>(&storage, SAVE_KEY).unwrap(),
+                expected
+            );
+            while !app.pending.is_empty() {
+                finish_next_recovery(&mut app);
+            }
+            assert_eq!(
+                app.records
+                    .iter()
+                    .map(|r| r.certificate.clone())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            app.save_state(&mut storage);
+        }
+    }
+    #[test]
+    fn record_limit_keeps_newest_after_restoring_and_adding() {
+        let mut storage = MemoryStorage::default();
+        let expected: Vec<_> = (1..=MAX_RECORDS as u16)
+            .rev()
+            .map(|n| distinct_proof(1, n, "甲").certificate)
+            .collect();
+        eframe::set_value(&mut storage, SAVE_KEY, &expected);
+        let mut app = application(Some(&storage));
+        while !app.pending.is_empty() {
+            finish_next_recovery(&mut app);
+        }
+        let newest = distinct_proof(1, 201, "甲");
+        app.add_record(newest.clone());
+        assert_eq!(app.records.len(), MAX_RECORDS);
+        assert_eq!(app.records[0].id(), newest.id());
+        assert_eq!(
+            app.records.last().unwrap().id(),
+            distinct_proof(1, 2, "甲").id()
+        );
+        let saved = app.stored_records();
+        assert_eq!(saved[1], expected[0]);
+        assert!(!saved.contains(expected.last().unwrap()));
+    }
+    #[test]
+    fn completed_questions_are_reused_after_cancel_or_failure_in_the_same_session() {
+        let ctx = test_context();
+        for cancel in [true, false] {
+            let mut app = application(None);
+            let original = distinct_proof(1, 10, "甲");
+            app.add_record(original.clone());
+            app.use_certificate(&original).unwrap();
+            app.questions[0].changed();
+            app.questions[0].files = csv_pair("PRIVATE REPLACEMENT Q1");
+            app.questions[1].files = csv_pair("PRIVATE Q2");
+            let completed = distinct_proof(1, 11, "甲");
+            app.accept_proof(0, completed.clone()).unwrap();
+            app.invalidate_generated();
+            app.generate_certificate(&ctx);
+            app.backend.reply(
+                json!({"type":"result","result":{"scores":vec![vec![1u64;9]],"canProve":true}}),
+            );
+            app.receive(&ctx);
+            assert!(matches!(app.task.as_ref().unwrap().kind, Kind::Prove(1)));
+            if cancel {
+                app.cancel(&ctx);
+            } else {
+                app.backend
+                    .reply(json!({"type":"error","message":"test engine failure"}));
+                app.receive(&ctx);
+            }
+            assert!(!app.busy());
+            assert!(app.ready.is_none());
+            assert_eq!(
+                app.questions[0].proof.as_ref().unwrap().id(),
+                completed.id()
+            );
+            assert_eq!(app.records[0].id(), original.id());
+            app.generate_certificate(&ctx);
+            finish_generation(&mut app, &ctx);
+            assert!(app.backend.requests.iter().all(|r| r["q"] == 2));
+            assert_eq!(app.records.len(), 1);
+            assert_ne!(app.records[0].id(), original.id());
+            assert!(app.records[0].score_for(1).is_some());
+            assert!(app.records[0].score_for(2).is_some());
+            assert!(app.records[0].score_for(3).is_none());
+        }
+    }
+    #[test]
+    fn restarting_restores_only_completed_records_and_an_empty_generation_form() {
+        let mut storage = MemoryStorage::default();
+        let mut app = application(None);
+        let record = distinct_proof(3, 20, "甲");
+        app.add_record(record.clone());
+        app.use_certificate(&record).unwrap();
+        app.questions[0].files = csv_pair("SECRET CSV CONTENTS");
+        app.accept_proof(0, distinct_proof(1, 21, "甲")).unwrap();
+        app.questions[1].files = csv_pair("SECRET INCOMPLETE GENERATION");
+        app.save_state(&mut storage);
+        let serialized = storage.values.values().cloned().collect::<String>();
+        assert!(!serialized.contains("SECRET"));
+        assert!(!serialized.contains("PRIVATE"));
+        assert_eq!(storage.values[LEGACY_DRAFT_KEY], "");
+        let mut reopened = application(Some(&storage));
+        assert!(reopened.team.is_empty());
+        assert!(reopened.editing_record.is_none());
+        assert!(reopened.ready.is_none());
+        assert!(reopened.questions.iter().all(|q| !q.active()));
+        assert!(
+            reopened.records.is_empty(),
+            "saved records must be verified again"
+        );
+        assert_eq!(reopened.pending.len(), 1);
+        finish_next_recovery(&mut reopened);
+        assert_eq!(reopened.records[0].id(), record.id());
+        assert!(reopened.questions.iter().all(|q| !q.active()));
+    }
+    #[test]
+    fn renaming_keeps_original_and_rejects_old_team_proofs() {
+        let mut app = application(None);
+        let original = distinct_proof(1, 50, "甲");
+        app.add_record(original.clone());
+        app.use_certificate(&original).unwrap();
+        app.team = "乙".into();
+        app.invalidate_generated();
+        assert!(app.accept_proof(0, original.clone()).is_err());
+        let renamed = distinct_proof(1, 51, "乙");
+        app.accept_proof(0, renamed.clone()).unwrap();
+        app.batch = Some(empty_batch());
+        app.next_batch(&test_context());
+        assert_eq!(app.records.len(), 2);
+        assert_eq!(app.records[0].id(), renamed.id());
+        assert_eq!(app.records[1].id(), original.id());
+    }
+    #[test]
+    fn successful_replacement_also_removes_original_waiting_for_reverification() {
+        let ctx = test_context();
+        let mut app = application(None);
+        let original = distinct_proof(1, 60, "甲");
+        app.team = "甲".into();
+        app.editing_record = Some(original.id());
+        app.pending.push_back(Pending {
+            imported: Imported {
+                certificate: original.certificate,
+                original: None,
+            },
+            name: "已保存证书".into(),
+            source: ImportSource::Record,
+        });
+        app.imports_paused = true;
+        let completed = distinct_proof(1, 61, "甲");
+        app.accept_proof(0, completed.clone()).unwrap();
+        app.batch = Some(empty_batch());
+        app.next_batch(&ctx);
+        assert!(app.pending.is_empty());
+        assert_eq!(app.stored_records(), vec![completed.certificate]);
     }
 }

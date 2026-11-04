@@ -11,13 +11,17 @@ globalThis.fetch=async url=>new Response(await fs.readFile(new URL(url)),{
 await import('../dist/client/zk-worker.js');
 const codec=await import('../dist/client/ui/flight_ui.js');
 await codec.default();
-for(const path of process.argv.slice(2)){
+const fixtures=process.argv.slice(2);
+if(!fixtures.length)for(const name of (await fs.readdir('tests/fixtures/certificates')).sort())if(name.endsWith('.json'))fixtures.push(`tests/fixtures/certificates/${name}`);
+assert.ok(fixtures.length,'No valid certificate fixtures supplied; this test cannot silently pass');
+await fs.mkdir('.cache/web-release',{recursive:true});
+for(const [index,path] of fixtures.entries()){
  const original=JSON.parse(await fs.readFile(path));
  await globalThis.onmessage({data:{action:'verify',certificate:original.certificate}});
  assert.equal(result.type,'result',JSON.stringify(result));
  assert.deepEqual(result.result.scores,original.scores);
  const item=JSON.stringify(result.result),png=codec.certificate_png(item);
- const nativePng=path.replace(/\.json$/,'.png');
+ const nativePng=`.cache/web-release/certificate-${index}.png`;
  await fs.writeFile(nativePng,png);
  assert.deepEqual(JSON.parse(codec.parse_certificate_file(png)),original.certificate);
  await globalThis.onmessage({data:{action:'import',file:Buffer.from(png).toString('base64')}});

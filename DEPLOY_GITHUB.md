@@ -1,6 +1,6 @@
 # 手动部署到 GitHub
 
-目标仓库：[https://github.com/HellOwhatAs/prp-certificate](https://github.com/HellOwhatAs/prp-certificate)。本包未向远端推送任何文件，也未替你开启 Pages 或发布 Release。
+目标仓库：[https://github.com/HellOwhatAs/prp-certificate](https://github.com/HellOwhatAs/prp-certificate)。本文说明从源码和参数包部署 Pages、构建六个平台 Release 的步骤。
 
 本版使用三合一 PNG（PRG2），不读取旧证书或迁移旧记录。已有三个参数包保持不变，可以直接复用。
 
@@ -8,7 +8,7 @@
 
 | 下载文件                           | 内容                                           | 是否需要             |
 | ------------------------------ | -------------------------------------------- | ---------------- |
-| `prp-certificate-source.zip`   | Rust 源码、预编译 WASM、题目 PDF、数据、模板、GitHub 工作流和本说明 | 必需               |
+| `prp-certificate-source.zip`   | Rust 源码、固定编译器配置、题目 PDF、数据、模板、GitHub 工作流和本说明 | 必需               |
 | `prp-flight-parameters-q1.zip` | 第一问公开证明参数，约 229 MB                           | 完整部署必需           |
 | `prp-flight-parameters-q2.zip` | 第二问公开证明参数，约 428 MB                           | 完整部署必需           |
 | `prp-flight-parameters-q3.zip` | 第三问公开证明参数，约 456 MB                           | 完整部署必需           |
@@ -68,7 +68,7 @@ python scripts/test-parameter-integrity.py
 
 网页、CSV 校验、证明生成和验证均在浏览器运行。约 1.11 GB 的公开证明参数保存在 Git 仓库中，由 GitHub Raw 提供；Pages 仅发布约 30 MB 静态文件。每次 Actions 构建将下载地址固定到实际提交 SHA，且每片仍会校验 SHA-256。
 
-`prp-certificate-pages.zip` 的预构建地址是 `HellOwhatAs/prp-certificate/main`，适用于当前目标仓库。走上述 Actions 部署时不必手动上传这个 ZIP；Actions 会生成更严格固定到提交 SHA 的版本。更换仓库名也只需让 Actions 重新构建。
+Release 的 `prp-certificate-pages.zip` 使用该版本标签实际对应的提交 SHA 下载参数。走上述 Actions 部署时不必手动上传这个 ZIP；Actions 会从当前提交重新编译 WASM 并固定到该提交的参数地址。更换仓库名也只需让 Actions 重新构建。
 
 网页同时打包单线程和多线程引擎。请完整保留 `engine-threaded/`、其 `snippets/` 子目录和 `isolation-worker.js` 等文件；首次访问会尝试自动刷新一次建立跨源隔离。HTTPS 的 GitHub Pages 项目子路径可直接使用，无需额外服务器。浏览器拒绝共享内存或 Service Worker 时仍可单线程生成证书。
 
@@ -77,13 +77,19 @@ python scripts/test-parameter-integrity.py
 代码和三个参数包全部上传后，创建一个新版本标签：
 
 ```sh
-git tag v0.4.6
-git push origin v0.4.6
+git tag v0.4.7
+git push origin v0.4.7
 ```
 
-这会触发 **Actions → Build and publish Release**。以后使用新的版本号，例如 `v0.4.7`；不要覆盖旧标签。
+这会触发 **Actions → Build and publish Release**。以后使用新的版本号，例如 `v0.4.8`；不要覆盖旧标签。0.4.7 是实现和回归改进，固定证明协议、验证密钥和参数保持不变。
 
-也可在 Actions 手动运行：在 `tag` 输入框填写一个**已经推送到仓库**的标签，例如 `v0.4.6`。工作流会核对标签并让所有构建使用同一提交。
+也可在 Actions 手动重建一个**已经推送到仓库**的标签。工作流版本与构建标签应匹配：在 **Use workflow from** 中选择对应标签，并在 `tag` 输入框填写同一标签；若界面只提供分支选项，使用 CLI 指定标签上的工作流。例如重建已有的 `v0.4.6`：
+
+```sh
+gh workflow run release.yml --ref v0.4.6 -f tag=v0.4.6
+```
+
+新工作流在 `resolve` 阶段比较正在运行的 `release.yml` 与标签内的同名文件。内容不同会在启动六个平台及公共构建前停止，并给出上述匹配标签的运行命令；工作流内容相同但源码提交不同仍可继续。旧标签使用自身版本的工作流重建，所有构建仍固定到该标签的提交。
 
 | 系统      | 架构                  | Release 附件                      |
 | ------- | ------------------- | ------------------------------- |
@@ -94,9 +100,11 @@ git push origin v0.4.6
 | Linux   | x64                 | `prp-flight-linux-x64.tar.gz`   |
 | Linux   | ARM64               | `prp-flight-linux-arm64.tar.gz` |
 
-还会上传三问参数 ZIP、源码 ZIP、Pages ZIP 和 `SHA256SUMS.txt`，共 12 个附件。所有构建和测试成功后才会发布；上传附件期间先保留为草稿，上传成功后转为正式 Release。失败时不会发布一个新建的半成品 Release；修复后可重新运行失败工作流。
+还会上传三问参数 ZIP、源码 ZIP、Pages ZIP 和 `SHA256SUMS.txt`，共 12 个附件。所有构建和测试成功后才会发布；上传附件期间先保留为草稿，上传成功后转为正式 Release。失败时不会发布一个新建的半成品 Release；修复后可重新运行失败工作流。重新运行已有 Release 时会更新同名附件，并保留当前发布说明。
 
-原生程序来自 Rust 编译；Pages 使用源码包内经过哈希检查的预编译 WASM。六个平台配置已经提供，远程编译结果需以你上传后 GitHub Actions 的实际运行状态为准。
+原生程序、网页 UI、单线程及多线程 WASM 都从该提交源码编译。普通 Rust 固定为 1.99.1，多线程 WASM 固定为 nightly-2025-11-15，wasm-bindgen 固定为 0.2.105。Release 发布前检查三问完整矩阵摘要，执行公开 Q1 的真实原生/浏览器单线程/多线程证明，以及真实证书和篡改回归；六个平台配置需以远程 Actions 的实际运行结果为准。
+
+源码未附带 Q2/Q3 私有可行解，所以正常 Release 不声称这两问已完成完整生成回归，也不要求配置额外 Secret。需要三问完整回归时，在打标签前对同一候选提交运行 **Full Q1 Q2 Q3 proof regression (private fixtures)**；私有 ZIP、两个 Secret 和本地复现步骤见 README 的“私有三问完整回归”。该工作流缺少任一夹具会直接失败，和普通发布流程独立。
 
 普通使用者只需下载对应系统的桌面程序。首次生成某一问时自动从 GitHub 下载对应参数并缓存，以后复用缓存；仅校验和验证证书无需下载参数。下载地址固定到该 Release 的提交 SHA。
 
@@ -104,16 +112,17 @@ git push origin v0.4.6
 
 ## 5. 后续修改
 
-只改部署说明、工作流、打包脚本时，无需重新编译 WASM。修改 `crates/`、网页脚本、题目数据、依赖或构建脚本时，需要重新生成 `web-dist/`：
+提交源码即可让 Pages / Release 在 CI 中重新编译 WASM。本地预览修改时先安装固定工具链，再生成 `web-dist/`：
 
 ```sh
-rustup target add wasm32-unknown-unknown
+rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+rustup toolchain install nightly-2025-11-15 --profile minimal --component rust-src --target wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.105 --locked
 npm ci
 npm run build:rust
 ```
 
-之后提交源码和更新后的 `web-dist/`。不要手工修改 `web-dist/release.json` 绕过过期检查。固定题目数据或约束的变化还涉及证明协议及初始化；普通 UI 修改不需要更换参数。
+`web-dist/`、`dist/` 都是生成目录，不再提交，源码 ZIP 也不包含 WASM；需要静态成品时使用单独的 Pages ZIP。不要手工修改 `web-dist/release.json` 绕过过期检查。固定题目数据或约束的变化还涉及证明协议及初始化；普通 UI 修改不需要更换参数。
 
 ## 6. 常见问题
 

@@ -1,0 +1,42 @@
+{
+  "certificate": {
+    "certificates": [
+      {
+        "metadata": {
+          "dataset": "9bc5848830ce5c27e0a54b75aefed68148a4852fef66726940145c287979c5a4",
+          "format": "prp-flight-groth16/1",
+          "nonce": "c03f8b9d-92a1-4978-80c8-84d5305de2f5",
+          "question": 1,
+          "rules": "prp-flight-final-g16-v1",
+          "team": "Public regression fixture"
+        },
+        "proof": "6i1d20axVvak5GT05vJkgS99nlhFR3J/F2GeD0svZKN6Q6Y0XdZvpnpvdu4eUXhhm7xykeG8dIy7lLdEbTj1DwnszmQ5VbUTUQHl2Ykjo0kR25a8QIe6ftSMmuJzNUiR47xR+Jhr09UfJF6k7KlsQi1jUN4tCqE43rFECzdXqZg=",
+        "scores": [
+          23638,
+          129800,
+          1931139,
+          136,
+          180,
+          387436,
+          1265229,
+          0,
+          33027
+        ]
+      }
+    ],
+    "format": "prp-flight-certificate-set/1"
+  },
+  "scores": [
+    [
+      23638,
+      129800,
+      1931139,
+      136,
+      180,
+      387436,
+      1265229,
+      0,
+      33027
+    ]
+  ]
+}

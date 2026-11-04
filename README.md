@@ -8,7 +8,11 @@ Rust / egui 网页与跨平台桌面应用。导入航线、人员分配 CSV，�
 
 生成前先校验所有已提交方案，再逐问生成证明，最后保存一张三合一 PNG。在“证书记录”中点击“更新”，回填队名和已有成绩，再补充或替换各问方案。原始 CSV 不保存在记录中。每问可分别“校验”或“清空”；修改文件、清空小问或修改队名后，需要重新生成才可导出。其他未修改小问的证明仍可复用。改回原队名可继续复用其证明；新队名需要对应的新证明。生成成功后更新同队名的原记录，改名生成则另存记录，失败或取消不改变原记录。页面底部并排提供“生成证书”和“导出证书”，导出文件为 PNG。仅校验不会生成二维码。第三问人员表列出全部 4000 人，未服务的临时人员安排字段留空。
 
+生成过程中已完成的单题证明仅在当前会话内保留，取消或后续题目失败后可以继续复用。关闭应用或刷新页面后，生成表单从空白开始，不恢复未完成进度，也不保存 CSV 文件名或内容。已生成的证书（可包含任意一至三问）保存在“证书记录”中，重开后重新验证并按原顺序恢复；需要续做时可从记录中点击“更新”。
+
 验证页导入 PNG / JPEG，左侧逐问显示完整成绩指标，右侧显示同一份证书。通过“证书记录”中的“查看”进入时，两侧同步更新；批量导入后展示最近一张，其他已验证证书在记录中查看，导入失败的文件仍单独列出。验证页不另设切换或下载入口。任一问证明无效则整张证书验证失败。记录按整张证书保存，不计算三问总分或统一排名。仅接受 PRG2 三合一格式，不导入旧证书或迁移旧记录。
+
+证书三问共用左侧优化目标、右侧四项统计的版式；第三问在同一目标区域默认左右并排展示总飞机使用时间和临时任务完成数，数值较长、并排需要明显缩小字号时，自动改为上下排列。两项目标始终使用相同字号。验证详情沿用统一的指标列表，临时任务完成紧接总飞机使用时间，人员在途时间保留在统计指标中。
 
 证书不含具体方案。队名为自填；证明认证方案可行性和成绩，不证明真实身份、算法原创、最优性或可信签发时间。第三问不证明相对基础方案的用时变化。
 
@@ -29,26 +33,20 @@ Rust / egui 网页与跨平台桌面应用。导入航线、人员分配 CSV，�
 
 ## 本地运行与构建
 
-使用已提供的网页编译文件预览（需要 Node.js 24，不需要重新安装 Rust）：
+从源码构建网页需要 Node.js 24、Rust 1.99.1，以及多线程引擎单独使用的固定 nightly。仓库的 `rust-toolchain.toml` 固定普通引擎和界面的编译器版本；以下命令安装匹配的工具并启动预览：
 
 ```sh
+rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+rustup toolchain install nightly-2025-11-15 --profile minimal --component rust-src --target wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.105 --locked
 npm ci
-npm run build
+npm run build:rust
 npm run dev
 ```
 
 打开 `http://localhost:3000`。本地服务从项目中的 `public/groth16/` 读取大参数。
 
-修改 Rust 或网页代码后重新构建（普通引擎和界面使用 stable；多线程引擎单独使用固定 nightly 重建支持原子操作的标准库）：
-
-```sh
-rustup target add wasm32-unknown-unknown
-rustup toolchain install nightly-2025-11-15 --component rust-src --target wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version 0.2.105 --locked
-npm run build:rust
-```
-
-`web-dist/` 保存编译文件以及源码/产物哈希；普通构建拒绝过期或被修改的预编译文件。修改代码后需把重新生成的 `web-dist/` 一并提交。Windows 使用 `.gitattributes` 固定文本为 LF，避免自动换行转换破坏哈希。
+`web-dist/` 是本地生成目录，不再提交到 Git 或放入源码 ZIP。Pages 和 Release 工作流每次从对应提交重新编译 UI、单线程引擎和多线程引擎；多线程构建同时重建支持原子操作的标准库。本地修改 Rust、网页代码或依赖后运行 `npm run build:rust`；仅重新组装已有产物时可运行 `npm run build`。源码/产物哈希检查仍会拒绝缺失、过期或被修改的编译文件。Windows 使用 `.gitattributes` 固定文本为 LF，避免自动换行转换破坏哈希。只需静态托管时可直接解压 Release 的 `prp-certificate-pages.zip`。
 
 网页生成证明时自动使用共享内存 Rayon 线程池，参数曲线点解码、约束行求值与检查、FFT、多项式逐项运算和分批 MSM 均可并行。计算线程数使用浏览器报告的全部逻辑 CPU 数，至少 1；不再减一、设置 8 线程上限或按内存分档限制。策略与桌面端默认值一致，但浏览器报告值可能与系统可用逻辑 CPU 数不同。校验和导入证书只加载轻量单线程引擎。任务结束、失败或取消时释放整个线程池。
 
@@ -83,7 +81,7 @@ Release 工作流通过 `FLIGHT_PARAMETER_REPOSITORY` 和 `FLIGHT_PARAMETER_REF`
 
 参数体积实测见 [docs/PARAMETER_SIZE.md](docs/PARAMETER_SIZE.md)；本版保持原参数文件不变。
 
-本次没有代替用户运行远程 GitHub Actions；六个平台配置需在上传后由实际 runner 执行。未进行 Windows / Apple 开发者签名。
+远程编译和发布结果以 GitHub Actions 对应提交的实际运行记录为准。发行程序未进行 Windows / Apple 开发者签名。
 
 ## 证明与固定规则
 
@@ -112,18 +110,69 @@ Release 工作流通过 `FLIGHT_PARAMETER_REPOSITORY` 和 `FLIGHT_PARAMETER_REF`
 
 ## 验证与开发
 
+仓库包含一个完全由公开数据生成的普通 Q1 可行方案：T3 机型、逐目的地运输、仅补充必要加油停靠，共 136 架次、23,638 航空器分钟。它不使用私有优化结果，生成器、CSV、固定九项成绩及真实 Groth16 证书都在 `tests/fixtures/` 中。Rust 和旧 JavaScript 校验器分别检查该方案及非法输入；原生端和构建出的 WASM 验证同一份固定密钥证书并拒绝篡改。
+
 ```sh
+node scripts/generate-public-fixture.mjs --check
+npm test
 cargo test --locked --workspace --release
 cargo test --locked -p flight-core --release all_circuit_matrices_match_pinned_setup -- --ignored
+cargo build --locked --release -p flight-core --bin flight-engine
+python scripts/test-certificates.py
+npm run build:rust
+node scripts/test-web-release.mjs
 node scripts/test-carrier.mjs
-REFERENCE_DIR=/path/to/private/trial_solve cargo test --locked -p flight-core --release --test checker
+```
+
+证书脚本需先构建 `flight-engine`；网页脚本需先运行 `npm run build:rust`。`test-certificates.py` 和 `test-web-release.mjs` 未传文件时使用仓库中的真实证书，找不到任何证书时直接失败。`test-web-preflight.mjs` 检查无效方案不会触发参数读取；`test-images.py` 可对指定证书测试压缩、缩放、旋转、裁切和遮挡。
+
+复现完整的公开 Q1 回归（需已下载 Q1 公开参数）：
+
+```sh
+node scripts/generate-public-fixture.mjs --check --job .cache/public-regression/job-q1.json
+cargo build --locked --release -p flight-core --bin flight-engine --example groth_regression
+python scripts/test-proof-regression.py --fixtures .cache/public-regression --questions 1 --output .cache/public-proof-results
+node scripts/test-web-release.mjs .cache/public-proof-results/q1.json
+```
+
+`test-proof-regression.py` 要求每个指定小问都有有效 `job-qN.json`，预先验证本地公开参数，在隔离缓存中完成真实生成；同时运行 `groth_regression` 的直接见证篡改、证明验证和证书篡改回归。公开方案的 CSV 和固定成绩可逐字复现；证明使用新鲜随机数，只比较认证后的成绩，不要求证明字节相同。
+
+当前自动检查的覆盖范围：
+
+| 检查 | PR / Pages | Release 发布前 |
+| --- | --- | --- |
+| Rust 核心、选题生成/记录恢复/文件导入状态、公开 Q1 与真实证书篡改 | 执行 | 六个平台执行 |
+| Q1/Q2/Q3 完整矩阵与固定初始化摘要一致 | 执行 | 执行 |
+| 从源码构建 UI、单线程和多线程 WASM | 执行 | 执行 |
+| 构建后的证书验证、QR 导入、线程启动/回退/取消 | 执行 | 执行 |
+| 新生成 Q1 证明：原生、浏览器单线程及多线程 | 不执行 | 执行 |
+| 新生成 Q2/Q3 证明 | 未配置公共可行夹具 | 通过单独的手动三问回归执行 |
+
+**矩阵摘要一致不能代替真实生成成功。** 当前源码不包含 Q2/Q3 的完整可行方案，因此正常 PR、Pages 和 Release 不会声称已经完成这两问的完整证明回归，也不依赖尚未配置的私有 Secret。
+
+### 私有三问完整回归
+
+有授权的私有可行方案时，将 `job-q1.json`、`job-q2.json`、`job-q3.json` 放在单独目录。每个 JSON 形如 `{"q":1,"files":{"routes":"航线 CSV 全文","assignments":"人员分配 CSV 全文"}}`。脚本使用固定测试署名，不记录原有作者信息：
+
+```sh
+python scripts/test-proof-regression.py --fixtures /path/to/private/jobs --questions 1,2,3
+```
+
+在发布候选提交上运行 GitHub Actions 的 **Full Q1 Q2 Q3 proof regression (private fixtures)** 可进一步完成三问原生生成、跨端验证、二维码导入，以及三问浏览器单线程/多线程生成。此手动工作流需要两个仓库 Secret：`PRP_REGRESSION_FIXTURE_URL` 为可由 runner 访问的私有 HTTPS ZIP 下载地址，`PRP_REGRESSION_FIXTURE_SHA256` 为 ZIP 的 SHA-256。ZIP 根目录必须恰好包含上述三个文件；链接可使用限时授权，不要把私有 CSV、ZIP 或下载地址提交到公开仓库。
+
+工作流先校验下载和三份夹具，缺少配置、缺一问、摘要错误或测试失败都会使它失败；不会把缺失回归计为通过。输入保存在 runner 临时目录，工作流不上传私有输入、证书、截图或报告，结束时清理。若要把三问完整回归作为发布要求，先在候选提交运行该工作流并确认通过，再给同一提交打版本标签；普通 Release 工作流没有自动等待该手动任务。
+
+历史组织者成绩对照单独保留为显式忽略测试：
+
+```sh
+REFERENCE_DIR=/path/to/private/trial_solve cargo test --locked -p flight-core --release --test checker private_reference_regression -- --ignored
 REFERENCE_DIR=/path/to/private/trial_solve npm test
 ```
 
-完整证明与对抗回归使用不随源码分发的 `.cache/rust-tests/job-qN.json`。`groth_regression` 直接篡改私密见证，验证约束拒绝不合法方案；`test-certificates.py` 验证元信息、成绩、证明篡改；`test-web-release.mjs` 测试准确构建出的 Worker 与 WASM；`test-web-preflight.mjs` 检查无效方案不会触发参数读取；`test-images.py` 测试压缩、缩放、旋转、裁切、遮挡。
+默认 Rust 输出明确标记这项测试为 `ignored`；显式执行却未设置 `REFERENCE_DIR` 时会失败。默认 JavaScript 输出明确标记私有回归为 `SKIP`，公开 Q1 仍正常执行。
 
 性能复现：`CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 RAYON_NUM_THREADS=8 cargo run --locked --release -p flight-core --example groth_profile -- /path/to/job.json --prove` 分别输出方案校验、见证转换、构建、摘要、约束检查和完整生成流程的时间；公开参数从本地 `public/groth16` 读取。浏览器先运行 `npm run build`，再用 `node scripts/test-web-threads.mjs --job /path/to/job.json --threads 8 --report .cache/benchmark.json` 对比固定 8 线程与单线程；可用 `--modes parallel` 只测多线程。线程数参数只控制测试，不改变应用的默认策略。报告不保存方案或证书。前后对比应使用相同方案、线程数、构建配置和设备，避免同时运行其他计算任务。
 
-`.github/workflows/pages.yml` 同时执行构建、参数完整性、线程策略和 Chromium 浏览器回归检查；浏览器检查覆盖跨源隔离、线程启动、单线程回退及 Worker 清理，默认不运行完整证明性能测试。Node 仅作为开发测试宿主，不进入应用运行依赖。
+`scripts/test-web-threads.mjs` 的完整浏览器生成需安装 Playwright 1.62.1 和 Chromium：`npm install --no-save --package-lock=false playwright@1.62.1`、`npx playwright install chromium`。Node 仅作为开发测试宿主，不进入应用运行依赖。
 
 字体使用 Noto Sans SC（SIL OFL 1.1）。依赖版本锁定于 Cargo.lock，许可证与置换网络来源见 public/THIRD_PARTY_LICENSES.txt。

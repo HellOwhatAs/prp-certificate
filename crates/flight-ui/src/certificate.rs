@@ -207,24 +207,29 @@ pub fn fmt(n: u64) -> String {
         })
         .collect()
 }
-/// The certificate image and verification details use the same labels, units and rounding.
-pub fn score_metrics(q: usize, s: &[u64]) -> [(&'static str, String); 5] {
+/// Optimization objectives share one presentation area in every question.
+pub fn score_objectives(q: usize, s: &[u64]) -> Vec<(&'static str, String, &'static str)> {
+    let mut objectives = vec![("总飞机使用时间", fmt(s[0]), "分钟")];
+    if q == 3 {
+        objectives.push(("临时任务完成", fmt(s[7]), "/ 160 人"));
+    }
+    objectives
+}
+
+/// Supporting metrics keep the same positions for all three questions.
+pub fn score_metrics(s: &[u64]) -> [(&'static str, String); 4] {
     let util = (s[5] * 10000 + s[6] / 2) / s[6];
     [
-        ("总飞机使用时间", format!("{} 分钟", fmt(s[0]))),
         ("总架次数", format!("{} 架次", fmt(s[3]))),
         ("座位利用率", format!("{}.{:02}%", util / 100, util % 100)),
         (
             "总燃油消耗",
             format!("{}.{:01} kg", fmt(s[2] / 10), s[2] % 10),
         ),
-        if q == 3 {
-            ("临时任务完成", format!("{} / 160 人", s[7]))
-        } else {
-            ("人员在途时间", format!("{} 分钟", fmt(s[1])))
-        },
+        ("人员在途时间", format!("{} 分钟", fmt(s[1]))),
     ]
 }
+
 pub fn render(item: &Verified) -> Result<Vec<u8>, String> {
     let set = item.set()?;
     let packed = flight_format::pack_set(&set)?;
@@ -283,11 +288,41 @@ fn draw(p: &mut [u8], team: &str, scores: &[Option<Vec<u64>>; 3]) {
         let Some(s) = score.as_ref().filter(|s| s.len() == 9 && s[6] > 0) else {
             continue;
         };
-        text(p, "总飞机使用时间", 140, top as i32 + 192, 27.0, grey);
-        fitted(p, &fmt(s[0]), 140, top as i32 + 295, 88.0, 500.0, ink);
-        text(p, "分钟", 140, top as i32 + 344, 25.0, grey);
-        let metrics = score_metrics(q + 1, s);
-        for (i, (label, value)) in metrics[1..].iter().enumerate() {
+        let objectives = score_objectives(q + 1, s);
+        // Both objectives use the same fitted size, even for unusually long scores.
+        let fitted_size = |widths: [f32; 2]| {
+            objectives
+                .iter()
+                .zip(widths)
+                .map(|((_, value, _), width)| {
+                    88.0 * (width / text_width(value, 88.0).max(1.0)).min(1.0)
+                })
+                .fold(88.0, f32::min)
+        };
+        let horizontal_size = fitted_size(if objectives.len() == 1 {
+            [500.0, 240.0]
+        } else {
+            [300.0, 240.0]
+        });
+        // Keep long objectives prominent by giving each the full left column.
+        let stacked = objectives.len() == 2 && horizontal_size < 72.0;
+        let value_size = if stacked {
+            fitted_size([500.0; 2])
+        } else {
+            horizontal_size
+        };
+        for (i, (label, value, unit)) in objectives.iter().enumerate() {
+            let (x, label_y, value_y, unit_y) = if stacked {
+                let dy = i as i32 * 164;
+                (140, 136 + dy, 222 + dy, 262 + dy)
+            } else {
+                (140 + i as i32 * 340, 192, 295, 344)
+            };
+            text(p, label, x, top as i32 + label_y, 27.0, grey);
+            text(p, value, x, top as i32 + value_y, value_size, ink);
+            text(p, unit, x, top as i32 + unit_y, 25.0, grey);
+        }
+        for (i, (label, value)) in score_metrics(s).iter().enumerate() {
             let x = if i % 2 == 0 { 770 } else { 1130 };
             let y = top as i32 + 186 + (i / 2) as i32 * 134;
             text(p, label, x, y, 25.0, grey);

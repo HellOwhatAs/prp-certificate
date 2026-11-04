@@ -3,10 +3,18 @@ use serde_json::Value;
 use std::sync::{Arc, Mutex};
 
 pub enum FileEvent {
+    SelectionStarted {
+        slot: usize,
+    },
     Loaded {
         slot: usize,
         name: String,
         bytes: Vec<u8>,
+    },
+    LoadError {
+        slot: usize,
+        name: String,
+        message: String,
     },
     Saved(String),
     Storage(Result<Value, String>),
@@ -17,6 +25,61 @@ fn deliver(queue: &FileQueue, ctx: &egui::Context, event: FileEvent) {
     queue.lock().unwrap().push(event);
     ctx.request_repaint();
 }
+#[cfg(not(target_arch = "wasm32"))]
+fn file_limit(slot: usize) -> (usize, &'static str) {
+    if slot == 6 {
+        (16_000_000, "证书图片不能超过 16 MB")
+    } else {
+        (10_000_000, "单个 CSV 不能超过 10 MB")
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_limited(
+    reader: impl std::io::Read,
+    limit: usize,
+    too_large: &str,
+) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    reader
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("文件读取失败：{e}"))?;
+    if bytes.len() > limit {
+        return Err(too_large.into());
+    }
+    Ok(bytes)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_file(file: &rfd::FileHandle, slot: usize) -> FileEvent {
+    let name = file.file_name();
+    let result = (|| {
+        let (limit, too_large) = file_limit(slot);
+        let input = std::fs::File::open(file.path()).map_err(|e| format!("无法打开文件：{e}"))?;
+        let metadata = input
+            .metadata()
+            .map_err(|e| format!("无法读取文件信息：{e}"))?;
+        if !metadata.is_file() {
+            return Err("请选择普通文件".into());
+        }
+        if metadata.len() > limit as u64 {
+            return Err(too_large.into());
+        }
+        // Also bound the read in case the file grows after its metadata was checked.
+        read_limited(input, limit, too_large)
+    })();
+    match result {
+        Ok(bytes) => FileEvent::Loaded { slot, name, bytes },
+        Err(message) => FileEvent::LoadError {
+            slot,
+            name,
+            message,
+        },
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub fn pick(slot: usize, queue: FileQueue, ctx: egui::Context) {
     let task = async move {
@@ -35,28 +98,15 @@ pub fn pick(slot: usize, queue: FileQueue, ctx: egui::Context) {
                     );
                     return;
                 }
+                if !files.is_empty() {
+                    deliver(&queue, &ctx, FileEvent::SelectionStarted { slot });
+                }
                 for f in files {
-                    deliver(
-                        &queue,
-                        &ctx,
-                        FileEvent::Loaded {
-                            slot,
-                            name: f.file_name(),
-                            bytes: f.read().await,
-                        },
-                    );
+                    deliver(&queue, &ctx, load_file(&f, slot));
                 }
             }
         } else if let Some(f) = dialog.pick_file().await {
-            deliver(
-                &queue,
-                &ctx,
-                FileEvent::Loaded {
-                    slot,
-                    name: f.file_name(),
-                    bytes: f.read().await,
-                },
-            );
+            deliver(&queue, &ctx, load_file(&f, slot));
         }
     };
     spawn(task);
@@ -97,19 +147,24 @@ mod browser_files {
                 let files: Vec<Value> =
                     serde_json::from_str(&value.as_string().ok_or("文件读取失败")?)
                         .map_err(|e| e.to_string())?;
+                if !files.is_empty() {
+                    deliver(&queue, &ctx, FileEvent::SelectionStarted { slot });
+                }
                 for file in files {
-                    let bytes = STANDARD
-                        .decode(file["data"].as_str().ok_or("文件读取失败")?)
-                        .map_err(|e| e.to_string())?;
-                    deliver(
-                        &queue,
-                        &ctx,
-                        FileEvent::Loaded {
+                    let name = file["name"].as_str().ok_or("文件名无效")?.to_owned();
+                    let bytes = file["data"]
+                        .as_str()
+                        .ok_or_else(|| "文件读取失败".to_owned())
+                        .and_then(|data| STANDARD.decode(data).map_err(|e| e.to_string()));
+                    let event = match bytes {
+                        Ok(bytes) => FileEvent::Loaded { slot, name, bytes },
+                        Err(message) => FileEvent::LoadError {
                             slot,
-                            name: file["name"].as_str().ok_or("文件名无效")?.into(),
-                            bytes,
+                            name,
+                            message,
                         },
-                    );
+                    };
+                    deliver(&queue, &ctx, event);
                 }
                 Ok::<(), String>(())
             }
@@ -166,7 +221,7 @@ mod target {
         }
     }
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(test)))]
 mod target {
     use super::*;
     use std::io::{BufRead, BufReader, Write};
@@ -249,7 +304,83 @@ mod target {
         }
     }
 }
+// Drive the real UI event handlers without spawning the test binary as an engine.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod target {
+    use super::*;
+    #[derive(Default)]
+    pub struct Backend {
+        pub requests: Vec<Value>,
+        messages: Vec<Value>,
+    }
+    impl Backend {
+        pub fn new() -> Self {
+            Self::default()
+        }
+        pub fn send(&mut self, value: Value) -> Result<(), String> {
+            self.cancel();
+            self.requests.push(value);
+            Ok(())
+        }
+        pub fn drain(&mut self) -> Vec<Value> {
+            std::mem::take(&mut self.messages)
+        }
+        pub fn cancel(&mut self) {
+            self.messages.clear();
+        }
+        pub fn reply(&mut self, message: Value) {
+            self.messages.push(message);
+        }
+    }
+}
 pub use target::Backend;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod file_tests {
+    use super::read_limited;
+    use std::io::{self, Cursor, Read};
+
+    #[test]
+    fn file_reads_accept_the_limit_and_stop_when_the_file_has_grown() {
+        assert_eq!(
+            read_limited(Cursor::new(b"12345678"), 8, "too large").unwrap(),
+            b"12345678"
+        );
+        let mut growing = Cursor::new(vec![0; 1024]);
+        assert_eq!(
+            read_limited(&mut growing, 8, "too large").unwrap_err(),
+            "too large"
+        );
+        assert_eq!(
+            growing.position(),
+            9,
+            "never read the rest of an oversized file"
+        );
+        assert!(
+            read_limited(Cursor::new([]), 8, "too large")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn file_read_errors_are_reported_instead_of_becoming_empty_files() {
+        struct Unreadable;
+        impl Read for Unreadable {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "permission denied",
+                ))
+            }
+        }
+        assert!(
+            read_limited(Unreadable, 8, "too large")
+                .unwrap_err()
+                .contains("permission denied")
+        );
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn storage(operation: &str, q: Option<usize>, queue: FileQueue, ctx: egui::Context) {

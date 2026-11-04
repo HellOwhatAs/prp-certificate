@@ -1,4 +1,4 @@
-// Explicit Rust rebuild. Normal hosting builds validate and copy these checked-in assets.
+// Rebuild all browser engines from source. Pages and Release CI run this first.
 import fs from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import {sourceHashes,artifactHashes} from './browser-release.mjs';
