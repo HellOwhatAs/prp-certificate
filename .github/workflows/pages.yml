@@ -47,6 +47,8 @@ jobs:
         run: npm run build:pages
       - run: node scripts/test-pages-build.mjs
       - run: node scripts/test-web-preflight.mjs
+      - name: Test bundled PDF rendering and current-file downloads
+        run: node scripts/test-materials.mjs --built dist/client
       - name: Verify real public certificates and QR import with the built WASM
         run: node scripts/test-web-release.mjs
       - run: npm install --no-save --package-lock=false playwright@1.62.1

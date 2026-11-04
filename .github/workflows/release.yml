@@ -155,6 +155,8 @@ jobs:
         run: npm run build:pages -- --ref "$RELEASE_COMMIT"
       - run: node scripts/test-pages-build.mjs
       - run: node scripts/test-web-preflight.mjs
+      - name: Test bundled PDF rendering and current-file downloads
+        run: node scripts/test-materials.mjs --built dist/client
       - name: Verify committed certificates and import their QR images in built WASM
         run: node scripts/test-web-release.mjs
       - name: Cross-verify the newly generated native proof in built WASM

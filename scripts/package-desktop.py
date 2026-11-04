@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory() as temporary:
     for file in ['README.md','DEPLOY_GITHUB.md']:
         shutil.copy2(file,root/file)
     (root/'licenses').mkdir()
-    for source in ['assets/OFL.txt','public/THIRD_PARTY_LICENSES.txt']:
+    for source in ['assets/OFL.txt','public/THIRD_PARTY_LICENSES.txt','public/MATERIALS_THIRD_PARTY_LICENSES.txt']:
         shutil.copy2(source,root/'licenses'/Path(source).name)
     (root/'START_HERE.txt').write_text(
         '打开 flight-ui（Windows 为 flight-ui.exe）。验证证书无需额外参数。\n'

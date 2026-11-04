@@ -1,6 +1,7 @@
 mod app;
 mod carrier;
 pub mod certificate;
+mod materials;
 mod platform;
 pub use app::FlightApp;
 
