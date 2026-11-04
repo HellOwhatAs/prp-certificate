@@ -1191,30 +1191,16 @@ impl FlightApp {
                         } else {
                             16.0
                         };
-                        for (label, value) in certificate::score_metrics(scores) {
+                        let objectives = certificate::score_objectives(q, scores)
+                            .into_iter()
+                            .map(|(label, value, unit)| (label, format!("{value} {unit}")));
+                        for (label, value) in objectives.chain(certificate::score_metrics(scores)) {
                             ui.columns(2, |cols| {
                                 cols[0].label(RichText::new(label).size(font_size).color(MUTED));
                                 cols[1].with_layout(
                                     egui::Layout::top_down(egui::Align::Max),
                                     |ui| {
                                         ui.label(RichText::new(value).size(font_size));
-                                    },
-                                );
-                            });
-                        }
-                        if q == 3 {
-                            ui.separator();
-                            ui.columns(2, |cols| {
-                                cols[0].label(
-                                    RichText::new("临时任务完成").size(font_size).color(MUTED),
-                                );
-                                cols[1].with_layout(
-                                    egui::Layout::top_down(egui::Align::Max),
-                                    |ui| {
-                                        ui.label(
-                                            RichText::new(certificate::temporary_tasks(scores))
-                                                .size(font_size),
-                                        );
                                     },
                                 );
                             });

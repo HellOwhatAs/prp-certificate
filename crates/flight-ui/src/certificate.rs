@@ -207,11 +207,19 @@ pub fn fmt(n: u64) -> String {
         })
         .collect()
 }
-/// Common metrics keep the same positions for all three questions.
-pub fn score_metrics(s: &[u64]) -> [(&'static str, String); 5] {
+/// Optimization objectives share one presentation area in every question.
+pub fn score_objectives(q: usize, s: &[u64]) -> Vec<(&'static str, String, &'static str)> {
+    let mut objectives = vec![("总飞机使用时间", fmt(s[0]), "分钟")];
+    if q == 3 {
+        objectives.push(("临时任务完成", fmt(s[7]), "/ 160 人"));
+    }
+    objectives
+}
+
+/// Supporting metrics keep the same positions for all three questions.
+pub fn score_metrics(s: &[u64]) -> [(&'static str, String); 4] {
     let util = (s[5] * 10000 + s[6] / 2) / s[6];
     [
-        ("总飞机使用时间", format!("{} 分钟", fmt(s[0]))),
         ("总架次数", format!("{} 架次", fmt(s[3]))),
         ("座位利用率", format!("{}.{:02}%", util / 100, util % 100)),
         (
@@ -222,10 +230,6 @@ pub fn score_metrics(s: &[u64]) -> [(&'static str, String); 5] {
     ]
 }
 
-/// Q3's additional outcome is displayed separately from the common metric grid.
-pub fn temporary_tasks(s: &[u64]) -> String {
-    format!("{} / 160 人", fmt(s[7]))
-}
 pub fn render(item: &Verified) -> Result<Vec<u8>, String> {
     let set = item.set()?;
     let packed = flight_format::pack_set(&set)?;
@@ -284,28 +288,29 @@ fn draw(p: &mut [u8], team: &str, scores: &[Option<Vec<u64>>; 3]) {
         let Some(s) = score.as_ref().filter(|s| s.len() == 9 && s[6] > 0) else {
             continue;
         };
-        text(p, "总飞机使用时间", 140, top as i32 + 192, 27.0, grey);
-        fitted(p, &fmt(s[0]), 140, top as i32 + 295, 88.0, 500.0, ink);
-        text(p, "分钟", 140, top as i32 + 344, 25.0, grey);
-        let metrics = score_metrics(s);
-        for (i, (label, value)) in metrics[1..].iter().enumerate() {
+        let objectives = score_objectives(q + 1, s);
+        let (label_y, value_y, unit_y, size, unit_size) = if objectives.len() == 1 {
+            (192, 295, 344, 88.0, 25.0)
+        } else {
+            (144, 214, 250, 56.0, 23.0)
+        };
+        // Both objectives use the same fitted size, even for unusually long scores.
+        let widest = objectives
+            .iter()
+            .map(|(_, value, _)| text_width(value, size))
+            .fold(1.0, f32::max);
+        let value_size = size * (500.0 / widest).min(1.0);
+        for (i, (label, value, unit)) in objectives.iter().enumerate() {
+            let y = top as i32 + i as i32 * 160;
+            text(p, label, 140, y + label_y, 27.0, grey);
+            text(p, value, 140, y + value_y, value_size, ink);
+            text(p, unit, 140, y + unit_y, unit_size, grey);
+        }
+        for (i, (label, value)) in score_metrics(s).iter().enumerate() {
             let x = if i % 2 == 0 { 770 } else { 1130 };
             let y = top as i32 + 186 + (i / 2) as i32 * 134;
             text(p, label, x, y, 25.0, grey);
             fitted(p, value, x, y + 54, 35.0, 324.0, ink);
-        }
-        if q == 2 {
-            rect(p, 140, top + 399, 1320, 1, [220, 224, 211]);
-            text(p, "临时任务完成", 140, top as i32 + 435, 25.0, grey);
-            fitted(
-                p,
-                &temporary_tasks(s),
-                1130,
-                top as i32 + 435,
-                30.0,
-                324.0,
-                ink,
-            );
         }
     }
     rect(p, 140, 1790, 1320, 2, rule);
