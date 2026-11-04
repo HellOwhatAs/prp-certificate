@@ -37,6 +37,19 @@ jobs:
           head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           if head != sha:
               raise SystemExit('The checkout does not match the requested tag')
+          workflow_sha=os.environ['GITHUB_WORKFLOW_SHA']
+          workflow_path='.github/workflows/release.yml'
+          if subprocess.run(['git','cat-file','-e',f'{workflow_sha}^{{commit}}'],stderr=subprocess.DEVNULL).returncode:
+              subprocess.run(['git','fetch','--no-tags','--depth=1','origin',workflow_sha],check=True)
+          running_workflow=subprocess.check_output(['git','show',f'{workflow_sha}:{workflow_path}'])
+          tagged_workflow=subprocess.check_output(['git','show',f'{sha}:{workflow_path}'])
+          # Different source commits are compatible when the workflow itself is unchanged.
+          if running_workflow != tagged_workflow:
+              raise SystemExit(
+                  f'The selected release workflow does not match {tag}. '
+                  'Run the workflow from the same tag:\n'
+                  f'gh workflow run release.yml --ref "{tag}" -f tag="{tag}"'
+              )
           with open(os.environ['GITHUB_OUTPUT'],'a') as output:
               output.write(f'tag={tag}\nsha={sha}\n')
           PY
@@ -199,4 +212,4 @@ jobs:
             gh release create "$RELEASE_TAG" --verify-tag --target "$RELEASE_SHA" --draft --title "$RELEASE_TAG" --notes-file release-notes.md
           fi
           gh release upload "$RELEASE_TAG" release/* --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --notes-file release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false

@@ -221,7 +221,7 @@ mod target {
         }
     }
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(test)))]
 mod target {
     use super::*;
     use std::io::{BufRead, BufReader, Write};
@@ -301,6 +301,35 @@ mod target {
     impl Drop for Backend {
         fn drop(&mut self) {
             self.cancel();
+        }
+    }
+}
+// Drive the real UI event handlers without spawning the test binary as an engine.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod target {
+    use super::*;
+    #[derive(Default)]
+    pub struct Backend {
+        pub requests: Vec<Value>,
+        messages: Vec<Value>,
+    }
+    impl Backend {
+        pub fn new() -> Self {
+            Self::default()
+        }
+        pub fn send(&mut self, value: Value) -> Result<(), String> {
+            self.cancel();
+            self.requests.push(value);
+            Ok(())
+        }
+        pub fn drain(&mut self) -> Vec<Value> {
+            std::mem::take(&mut self.messages)
+        }
+        pub fn cancel(&mut self) {
+            self.messages.clear();
+        }
+        pub fn reply(&mut self, message: Value) {
+            self.messages.push(message);
         }
     }
 }

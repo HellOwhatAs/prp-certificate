@@ -2,7 +2,6 @@ use crate::certificate::{self, Imported, Verified, fmt};
 use crate::platform::{self, Backend, FileEvent, FileQueue};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use eframe::egui::{self, Color32, RichText};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -18,19 +17,8 @@ const NAMES: [&str; 3] = [
 ];
 const SLOT_KEYS: [&str; 2] = ["routes", "assignments"];
 const SAVE_KEY: &str = "prp-combined-certificates-v1";
-const DRAFT_KEY: &str = "prp-generation-draft-v1";
+const LEGACY_DRAFT_KEY: &str = "prp-generation-draft-v1";
 const MAX_RECORDS: usize = 200;
-
-// Only public proofs and enough metadata to resume are persisted. CSV names,
-// contents and unchecked scores deliberately remain in memory.
-#[derive(Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct StoredDraft {
-    team: String,
-    editing_record: Option<String>,
-    active: [bool; 3],
-    proofs: [Option<Value>; 3],
-}
 
 #[derive(Default)]
 struct CsvFile {
@@ -39,7 +27,6 @@ struct CsvFile {
 }
 #[derive(Default)]
 struct Question {
-    requested: bool,
     files: [CsvFile; 2],
     checked: Option<Vec<u64>>,
     proof: Option<Verified>,
@@ -58,7 +45,7 @@ impl Question {
         self.proof.as_ref().filter(|p| p.team() == team.trim())
     }
     fn active(&self) -> bool {
-        self.requested || self.has_files() || self.proof.is_some()
+        self.has_files() || self.proof.is_some()
     }
     fn changed(&mut self) {
         self.checked = None;
@@ -89,7 +76,6 @@ struct Task {
 enum ImportSource {
     File,
     Record,
-    Draft(usize),
 }
 struct Pending {
     imported: Imported,
@@ -221,43 +207,7 @@ impl FlightApp {
         app
     }
     fn restore_state(&mut self, storage: &dyn eframe::Storage) {
-        let draft: StoredDraft = eframe::get_value(storage, DRAFT_KEY).unwrap_or_default();
-        self.team = draft.team;
-        self.editing_record = draft.editing_record;
-        for (q, certificate) in draft.proofs.into_iter().enumerate() {
-            self.questions[q].requested = draft.active[q] || certificate.is_some();
-            if let Some(certificate) = certificate {
-                // Parsing only establishes the expected slot/team. No stored proof
-                // becomes usable until the normal backend verification succeeds.
-                let matches_draft = flight_format::CertificateSet::from_value(&certificate)
-                    .is_ok_and(|set| {
-                        set.certificates.len() == 1
-                            && set.certificates[0].metadata.question == q + 1
-                            && set.team() == self.team.trim()
-                    });
-                if matches_draft {
-                    self.pending.push_back(Pending {
-                        imported: Imported {
-                            certificate,
-                            original: None,
-                        },
-                        name: format!("第 {} 问已保存进度", q + 1),
-                        source: ImportSource::Draft(q),
-                    });
-                } else {
-                    self.questions[q].error =
-                        "已保存进度与当前题目或署名不一致，请重新选择 CSV".into();
-                }
-            }
-        }
-        if self.questions.iter().any(Question::active) {
-            self.status = if self.pending.is_empty() {
-                "已恢复生成进度，请重新选择未完成题目的 CSV"
-            } else {
-                "正在恢复生成进度，未完成的题目需重新选择 CSV"
-            }
-            .into();
-        }
+        // Only completed records survive a restart. A new generation form is empty.
         let saved: Vec<Value> = eframe::get_value(storage, SAVE_KEY).unwrap_or_default();
         self.pending.extend(
             saved
@@ -294,38 +244,10 @@ impl FlightApp {
         certs.truncate(MAX_RECORDS);
         certs
     }
-    fn stored_draft(&self) -> StoredDraft {
-        let mut proofs = std::array::from_fn(|q| {
-            self.questions[q]
-                .proof_for(&self.team)
-                .map(|p| p.certificate.clone())
-        });
-        // Keep unverified recovery work across another close/cancel, without
-        // promoting it to trusted Question state or dropping completed work.
-        for p in self
-            .task
-            .iter()
-            .filter_map(|task| task.import.as_ref())
-            .chain(self.pending.iter())
-        {
-            if let ImportSource::Draft(q) = p.source {
-                let same_team = flight_format::CertificateSet::from_value(&p.imported.certificate)
-                    .is_ok_and(|set| set.team() == self.team.trim());
-                if proofs[q].is_none() && self.questions[q].active() && same_team {
-                    proofs[q] = Some(p.imported.certificate.clone());
-                }
-            }
-        }
-        StoredDraft {
-            team: self.team.clone(),
-            editing_record: self.editing_record.clone(),
-            active: std::array::from_fn(|q| self.questions[q].active()),
-            proofs,
-        }
-    }
     fn save_state(&self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, SAVE_KEY, &self.stored_records());
-        eframe::set_value(storage, DRAFT_KEY, &self.stored_draft());
+        // Discard progress left by the earlier partial-draft implementation.
+        storage.set_string(LEGACY_DRAFT_KEY, String::new());
     }
     fn flush_checkpoint(&mut self, storage: &mut dyn eframe::Storage) {
         if self.checkpoint_pending {
@@ -333,9 +255,6 @@ impl FlightApp {
             storage.flush();
             self.checkpoint_pending = false;
         }
-    }
-    fn discard_draft_recovery(&mut self, q: usize) {
-        self.pending.retain(|p| p.source != ImportSource::Draft(q));
     }
     fn busy(&self) -> bool {
         self.task.is_some() || self.batch.is_some()
@@ -411,15 +330,6 @@ impl FlightApp {
     }
     fn generate_certificate(&mut self, ctx: &egui::Context) {
         if self.busy() || self.storage_busy {
-            return;
-        }
-        if self
-            .pending
-            .iter()
-            .any(|p| matches!(p.source, ImportSource::Draft(_)))
-        {
-            self.imports_paused = false;
-            self.next_import();
             return;
         }
         let team = self.team.trim();
@@ -558,9 +468,6 @@ impl FlightApp {
         self.editing_record = Some(item.id());
         self.ready = Some(item.clone());
         self.questions = Default::default();
-        self.pending
-            .retain(|p| !matches!(p.source, ImportSource::Draft(_)));
-        self.checkpoint_pending = true;
         for part in parts {
             let q = part.question() as usize - 1;
             self.questions[q].proof = Some(part);
@@ -573,7 +480,6 @@ impl FlightApp {
         Ok(())
     }
     fn invalidate_generated(&mut self) {
-        self.checkpoint_pending = true;
         self.ready = None;
         self.dirty = true;
         self.status.clear();
@@ -588,7 +494,6 @@ impl FlightApp {
         }
         self.questions[q].proof = Some(item);
         self.questions[q].error.clear();
-        self.checkpoint_pending = true;
         self.dirty = true;
         Ok(())
     }
@@ -604,28 +509,6 @@ impl FlightApp {
         }
         let item = Verified::combine(&[item])?;
         match p.source {
-            ImportSource::Draft(q) => {
-                if !self.questions[q].active() || self.questions[q].has_files() {
-                    return Err("已保存进度已被当前方案替换".into());
-                }
-                self.accept_proof(q, item)?;
-                let still_restoring = self
-                    .pending
-                    .iter()
-                    .any(|p| matches!(p.source, ImportSource::Draft(_)));
-                if !still_restoring {
-                    self.ready = self.ready_certificate();
-                    if !self.questions.iter().any(|q| !q.error.is_empty()) {
-                        self.status = if self.ready.is_some() {
-                            "已恢复已验证的证书进度"
-                        } else {
-                            "已恢复生成进度，请重新选择未完成题目的 CSV"
-                        }
-                        .into();
-                        self.error = false;
-                    }
-                }
-            }
             ImportSource::Record => self.restore_record(item),
             ImportSource::File => {
                 self.add_record(item.clone());
@@ -637,10 +520,6 @@ impl FlightApp {
         Ok(())
     }
     fn reject_import(&mut self, p: Pending, error: String) {
-        if let ImportSource::Draft(q) = p.source {
-            self.questions[q].error = format!("已保存进度验证失败：{error}；请重新选择 CSV");
-            self.dirty = true;
-        }
         self.checkpoint_pending = true;
         self.set_review_error(p.name, error);
     }
@@ -655,18 +534,6 @@ impl FlightApp {
             }
             Kind::Import => {
                 if let Some(p) = task.import {
-                    if let ImportSource::Draft(q) = p.source {
-                        // An engine/worker error is not evidence that the stored
-                        // proof is invalid. Keep it untrusted and retryable.
-                        let message = format!("已保存进度未能验证：{error}；可重试或重新选择 CSV");
-                        self.questions[q].error = message.clone();
-                        self.pending.push_front(p);
-                        self.imports_paused = true;
-                        self.checkpoint_pending = true;
-                        self.dirty = true;
-                        self.show_error(format!("第 {} 问：{message}", q + 1));
-                        return;
-                    }
                     self.reject_import(p, error.clone());
                 }
                 self.show_error(error);
@@ -766,7 +633,6 @@ impl FlightApp {
                     }
                     match String::from_utf8(bytes) {
                         Ok(text) => {
-                            self.discard_draft_recovery(slot / 2);
                             let question = &mut self.questions[slot / 2];
                             question.changed();
                             question.files[slot % 2] = CsvFile { name, text };
@@ -1039,7 +905,6 @@ impl FlightApp {
             })
             .inner;
         if clear {
-            self.discard_draft_recovery(q);
             self.questions[q] = Question::default();
             self.invalidate_generated();
         }
@@ -1078,8 +943,6 @@ impl FlightApp {
                 )
                 .changed()
             {
-                self.pending
-                    .retain(|p| !matches!(p.source, ImportSource::Draft(_)));
                 self.invalidate_generated();
             }
         });
@@ -1765,8 +1628,7 @@ impl eframe::App for FlightApp {
                     ui.horizontal(|ui| {
                         if ui.button("清空").clicked() {
                             self.records.clear();
-                            self.pending
-                                .retain(|p| matches!(p.source, ImportSource::Draft(_)));
+                            self.pending.clear();
                             self.checkpoint_pending = true;
                             self.review = None;
                             self.import_failures.clear();
@@ -1793,10 +1655,30 @@ impl eframe::App for FlightApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn test_context() -> egui::Context {
+        let ctx = egui::Context::default();
+        ctx.input_mut(|input| input.max_texture_side = 4096);
+        ctx
+    }
+    fn finish_generation(app: &mut FlightApp, ctx: &egui::Context) {
+        for _ in 0..6 {
+            let Some(task) = app.task.as_ref() else { break };
+            let result = match task.kind {
+                Kind::Check(_) => json!({"scores":vec![vec![1u64;9]],"canProve":true}),
+                Kind::Prove(q) => serde_json::to_value(proof(q + 1)).unwrap(),
+                Kind::Import => panic!("unexpected import during generation"),
+            };
+            app.backend.reply(json!({"type":"result","result":result}));
+            app.receive(ctx);
+        }
+        assert!(!app.busy(), "generation did not finish: {}", app.status);
+        assert_eq!(app.status, "证书已生成");
+        assert!(app.ready.is_some());
+    }
     #[test]
     fn storage_modal_blocks_navigation_and_close_has_a_full_hoverable_hit_area() {
         use eframe::App;
-        let ctx = egui::Context::default();
+        let ctx = test_context();
         let mut app = FlightApp::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
         ctx.style_mut(|style| style.animation_time = 0.0);
         let draw = |app: &mut FlightApp, events| {
@@ -1884,7 +1766,7 @@ mod tests {
     #[test]
     fn storage_window_fits_narrow_and_wide_views() {
         for width in [320.0, 400.0, 1024.0] {
-            let ctx = egui::Context::default();
+            let ctx = test_context();
             let mut app = FlightApp::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
             app.storage_open = true;
             app.storage_state = Some(json!({"available":true,"rows":[
@@ -2002,7 +1884,7 @@ mod tests {
 
     #[test]
     fn batch_file_read_failures_survive_later_frames_and_successful_imports() {
-        let ctx = egui::Context::default();
+        let ctx = test_context();
         let mut app = application(None);
         // Hold backend work while delivering one picker selection over two frames.
         app.storage_busy = true;
@@ -2061,7 +1943,7 @@ mod tests {
         }
     }
     fn application(storage: Option<&dyn eframe::Storage>) -> FlightApp {
-        let mut cc = eframe::CreationContext::_new_kittest(egui::Context::default());
+        let mut cc = eframe::CreationContext::_new_kittest(test_context());
         cc.storage = storage;
         FlightApp::new(&cc)
     }
@@ -2091,8 +1973,7 @@ mod tests {
     fn finish_next_recovery(app: &mut FlightApp) {
         let p = app.pending.pop_front().unwrap();
         let result = verification_result(&p.imported.certificate);
-        app.accept_import(&p, result, &egui::Context::default())
-            .unwrap();
+        app.accept_import(&p, result, &test_context()).unwrap();
     }
     fn empty_batch() -> Batch {
         Batch {
@@ -2105,6 +1986,95 @@ mod tests {
             name: format!("PRIVATE-{slot}.csv"),
             text: marker.to_owned(),
         })
+    }
+    #[test]
+    fn legacy_draft_must_not_force_unselected_questions_into_generation() {
+        let ctx = test_context();
+        let mut storage = MemoryStorage::default();
+        // Exact RON stored by the removed draft implementation, including stale selections.
+        storage.values.insert(
+            LEGACY_DRAFT_KEY.into(),
+            r#"(team:"甲",editing_record:None,active:(true,true,true),proofs:(None,None,None))"#
+                .into(),
+        );
+        for mask in 1..=7 {
+            let mut app = application(Some(&storage));
+            app.team = "甲".into();
+            for q in 0..3 {
+                if mask & (1 << q) != 0 {
+                    app.accept_proof(q, proof(q + 1)).unwrap();
+                }
+            }
+            app.generate_certificate(&ctx);
+            assert_eq!(app.status, "证书已生成", "question mask {mask}");
+            let item = app.ready.as_ref().unwrap();
+            for q in 0..3 {
+                assert_eq!(item.score_for(q + 1).is_some(), mask & (1 << q) != 0);
+            }
+        }
+    }
+    #[test]
+    fn csv_selection_generates_exactly_the_selected_question_subset() {
+        let ctx = test_context();
+        for mask in 0..=7 {
+            let mut app = application(None);
+            app.team = "甲".into();
+            let selected: Vec<_> = (0..3).filter(|q| mask & (1 << q) != 0).collect();
+            for &q in &selected {
+                for slot in 0..2 {
+                    app.file_events.lock().unwrap().push(FileEvent::Loaded {
+                        slot: q * 2 + slot,
+                        name: format!("q{}-{slot}.csv", q + 1),
+                        bytes: b"private CSV input".to_vec(),
+                    });
+                }
+            }
+            app.receive(&ctx);
+            app.generate_certificate(&ctx);
+            if selected.is_empty() {
+                assert!(app.error);
+                assert!(app.backend.requests.is_empty());
+                assert!(app.ready.is_none());
+                continue;
+            }
+            finish_generation(&mut app, &ctx);
+            let requests: Vec<_> = app
+                .backend
+                .requests
+                .iter()
+                .map(|r| (r["action"].as_str().unwrap(), r["q"].as_u64().unwrap()))
+                .collect();
+            let expected: Vec<_> = ["check", "prove"]
+                .into_iter()
+                .flat_map(|action| selected.iter().map(move |q| (action, (q + 1) as u64)))
+                .collect();
+            assert_eq!(requests, expected, "question mask {mask}");
+            let item = app.ready.as_ref().unwrap();
+            for q in 0..3 {
+                assert_eq!(item.score_for(q + 1).is_some(), selected.contains(&q));
+            }
+        }
+    }
+    #[test]
+    fn incomplete_current_input_blocks_generation_until_explicitly_cleared() {
+        let ctx = test_context();
+        let mut app = application(None);
+        app.team = "甲".into();
+        app.accept_proof(0, proof(1)).unwrap();
+        app.questions[1].files[0] = CsvFile {
+            name: "routes.csv".into(),
+            text: "unfinished current input".into(),
+        };
+        app.generate_certificate(&ctx);
+        assert!(app.error && app.status.starts_with("第 2 问"));
+        assert!(app.ready.is_none());
+        assert!(app.backend.requests.is_empty());
+        app.questions[1] = Question::default();
+        app.invalidate_generated();
+        app.generate_certificate(&ctx);
+        assert_eq!(app.status, "证书已生成");
+        assert!(app.ready.as_ref().unwrap().score_for(1).is_some());
+        assert!(app.ready.as_ref().unwrap().score_for(2).is_none());
     }
     #[test]
     fn record_order_survives_repeated_restart_and_in_flight_save() {
@@ -2134,7 +2104,7 @@ mod tests {
                 eframe::get_value::<Vec<Value>>(&storage, SAVE_KEY).unwrap(),
                 expected
             );
-            app.cancel(&egui::Context::default());
+            app.cancel(&test_context());
             app.flush_checkpoint(&mut storage);
             assert_eq!(
                 eframe::get_value::<Vec<Value>>(&storage, SAVE_KEY).unwrap(),
@@ -2178,312 +2148,98 @@ mod tests {
         assert!(!saved.contains(expected.last().unwrap()));
     }
     #[test]
-    fn partial_batch_checkpoints_public_proofs_without_csv_and_resumes_after_cancel() {
-        let ctx = egui::Context::default();
+    fn completed_questions_are_reused_after_cancel_or_failure_in_the_same_session() {
+        let ctx = test_context();
+        for cancel in [true, false] {
+            let mut app = application(None);
+            let original = distinct_proof(1, 10, "甲");
+            app.add_record(original.clone());
+            app.use_certificate(&original).unwrap();
+            app.questions[0].changed();
+            app.questions[0].files = csv_pair("PRIVATE REPLACEMENT Q1");
+            app.questions[1].files = csv_pair("PRIVATE Q2");
+            let completed = distinct_proof(1, 11, "甲");
+            app.accept_proof(0, completed.clone()).unwrap();
+            app.invalidate_generated();
+            app.generate_certificate(&ctx);
+            app.backend.reply(
+                json!({"type":"result","result":{"scores":vec![vec![1u64;9]],"canProve":true}}),
+            );
+            app.receive(&ctx);
+            assert!(matches!(app.task.as_ref().unwrap().kind, Kind::Prove(1)));
+            if cancel {
+                app.cancel(&ctx);
+            } else {
+                app.backend
+                    .reply(json!({"type":"error","message":"test engine failure"}));
+                app.receive(&ctx);
+            }
+            assert!(!app.busy());
+            assert!(app.ready.is_none());
+            assert_eq!(
+                app.questions[0].proof.as_ref().unwrap().id(),
+                completed.id()
+            );
+            assert_eq!(app.records[0].id(), original.id());
+            app.generate_certificate(&ctx);
+            finish_generation(&mut app, &ctx);
+            assert!(app.backend.requests.iter().all(|r| r["q"] == 2));
+            assert_eq!(app.records.len(), 1);
+            assert_ne!(app.records[0].id(), original.id());
+            assert!(app.records[0].score_for(1).is_some());
+            assert!(app.records[0].score_for(2).is_some());
+            assert!(app.records[0].score_for(3).is_none());
+        }
+    }
+    #[test]
+    fn restarting_restores_only_completed_records_and_an_empty_generation_form() {
         let mut storage = MemoryStorage::default();
         let mut app = application(None);
-        let original = distinct_proof(1, 10, "甲");
-        app.add_record(original.clone());
-        app.use_certificate(&original).unwrap();
-        app.questions[0].changed();
-        app.questions[0].files = csv_pair("SECRET CSV ROUTES AND ASSIGNMENTS");
-        app.questions[1].files = csv_pair("SECRET REMAINING CSV");
-        let completed = distinct_proof(1, 11, "甲");
-        app.accept_proof(0, completed.clone()).unwrap();
-        app.batch = Some(empty_batch());
-        app.task = Some(Task {
-            kind: Kind::Prove(1),
-            import: None,
-        });
-        app.flush_checkpoint(&mut storage);
-        assert_eq!(
-            storage.flushes, 1,
-            "completed proof is flushed before the batch ends"
-        );
-        app.flush_checkpoint(&mut storage);
-        assert_eq!(storage.flushes, 1, "unchanged frames do not keep flushing");
+        let record = distinct_proof(3, 20, "甲");
+        app.add_record(record.clone());
+        app.use_certificate(&record).unwrap();
+        app.questions[0].files = csv_pair("SECRET CSV CONTENTS");
+        app.accept_proof(0, distinct_proof(1, 21, "甲")).unwrap();
+        app.questions[1].files = csv_pair("SECRET INCOMPLETE GENERATION");
+        app.save_state(&mut storage);
         let serialized = storage.values.values().cloned().collect::<String>();
         assert!(!serialized.contains("SECRET"));
         assert!(!serialized.contains("PRIVATE"));
-        let saved: StoredDraft = eframe::get_value(&storage, DRAFT_KEY).unwrap();
-        assert_eq!(saved.active, [true, true, false]);
-        assert_eq!(saved.proofs[0], Some(completed.certificate.clone()));
-        assert!(saved.proofs[1].is_none());
-        assert_eq!(
-            app.records[0].id(),
-            original.id(),
-            "partial success preserves the original"
-        );
-
-        app.cancel(&ctx);
-        app.flush_checkpoint(&mut storage);
+        assert_eq!(storage.values[LEGACY_DRAFT_KEY], "");
         let mut reopened = application(Some(&storage));
-        assert_eq!(reopened.team, "甲");
+        assert!(reopened.team.is_empty());
+        assert!(reopened.editing_record.is_none());
         assert!(reopened.ready.is_none());
+        assert!(reopened.questions.iter().all(|q| !q.active()));
         assert!(
-            reopened
-                .questions
-                .iter()
-                .all(|q| q.proof.is_none() && !q.has_files())
+            reopened.records.is_empty(),
+            "saved records must be verified again"
         );
-        assert!(
-            reopened.questions[1].active(),
-            "unfinished question cannot silently disappear"
-        );
-        assert!(matches!(
-            reopened.pending.front().unwrap().source,
-            ImportSource::Draft(0)
-        ));
+        assert_eq!(reopened.pending.len(), 1);
         finish_next_recovery(&mut reopened);
-        assert_eq!(
-            reopened.questions[0].proof.as_ref().unwrap().id(),
-            completed.id()
-        );
-        assert!(reopened.ready.is_none(), "remaining CSV is still required");
-        finish_next_recovery(&mut reopened);
-        assert_eq!(reopened.records[0].id(), original.id());
-        reopened.generate_certificate(&ctx);
-        assert!(reopened.task.is_none());
-        assert!(reopened.status.contains("请选择完整"));
-        assert_eq!(reopened.records[0].id(), original.id());
-
-        reopened
-            .accept_proof(1, distinct_proof(2, 12, "甲"))
-            .unwrap();
-        reopened.batch = Some(empty_batch());
-        reopened.next_batch(&ctx);
-        assert_eq!(reopened.records.len(), 1);
-        assert_ne!(reopened.records[0].id(), original.id());
-        assert!(reopened.records[0].score_for(1).is_some());
-        assert!(reopened.records[0].score_for(2).is_some());
+        assert_eq!(reopened.records[0].id(), record.id());
+        assert!(reopened.questions.iter().all(|q| !q.active()));
     }
     #[test]
-    fn later_proof_failure_preserves_completed_progress_and_original_record() {
-        let mut app = application(None);
-        let original = distinct_proof(1, 20, "甲");
-        app.add_record(original.clone());
-        app.use_certificate(&original).unwrap();
-        app.questions[1].files = csv_pair("PRIVATE INCOMPLETE INPUT");
-        let completed = distinct_proof(1, 21, "甲");
-        app.accept_proof(0, completed.clone()).unwrap();
-        app.batch = Some(empty_batch());
-        app.fail_task(
-            Task {
-                kind: Kind::Prove(1),
-                import: None,
-            },
-            "证明失败".into(),
-        );
-        assert!(app.batch.is_none());
-        assert_eq!(app.records[0].id(), original.id());
-        assert_eq!(
-            app.questions[0].proof.as_ref().unwrap().id(),
-            completed.id()
-        );
-        assert!(app.ready_certificate().is_none());
-        let mut storage = MemoryStorage::default();
-        app.flush_checkpoint(&mut storage);
-        let draft: StoredDraft = eframe::get_value(&storage, DRAFT_KEY).unwrap();
-        assert_eq!(draft.proofs[0], Some(completed.certificate));
-        assert_eq!(draft.active, [true, true, false]);
-    }
-    #[test]
-    fn unverified_recovery_survives_reclose_but_cannot_override_new_input() {
-        let mut storage = MemoryStorage::default();
-        let doc = distinct_proof(1, 30, "甲").certificate;
-        eframe::set_value(
-            &mut storage,
-            DRAFT_KEY,
-            &StoredDraft {
-                team: "甲".into(),
-                active: [true, true, false],
-                proofs: [Some(doc.clone()), None, None],
-                ..Default::default()
-            },
-        );
-        let mut app = application(Some(&storage));
-        let p = app.pending.pop_front().unwrap();
-        app.task = Some(Task {
-            kind: Kind::Import,
-            import: Some(p),
-        });
-        app.save_state(&mut storage);
-        let saved: StoredDraft = eframe::get_value(&storage, DRAFT_KEY).unwrap();
-        assert_eq!(saved.proofs[0], Some(doc.clone()));
-        app.cancel(&egui::Context::default());
-        assert!(app.questions[0].proof.is_none());
-        app.discard_draft_recovery(0);
-        app.questions[0].changed();
-        app.questions[0].files = csv_pair("PRIVATE REPLACEMENT");
-        app.invalidate_generated();
-        app.flush_checkpoint(&mut storage);
-        let saved: StoredDraft = eframe::get_value(&storage, DRAFT_KEY).unwrap();
-        assert!(saved.proofs[0].is_none());
-        assert!(app.pending.is_empty());
-        assert!(saved.active[0]);
-    }
-    #[test]
-    fn restored_proofs_must_match_slot_team_and_verified_document() {
-        let mut storage = MemoryStorage::default();
-        eframe::set_value(
-            &mut storage,
-            DRAFT_KEY,
-            &StoredDraft {
-                team: "甲".into(),
-                active: [true; 3],
-                proofs: [
-                    Some(distinct_proof(2, 40, "甲").certificate),
-                    Some(distinct_proof(2, 41, "乙").certificate),
-                    Some(distinct_proof(3, 42, "甲").certificate),
-                ],
-                ..Default::default()
-            },
-        );
-        let mut app = application(Some(&storage));
-        assert!(app.questions.iter().all(|q| q.proof.is_none()));
-        assert_eq!(app.pending.len(), 1);
-        assert!(!app.questions[0].error.is_empty());
-        assert!(!app.questions[1].error.is_empty());
-        let p = app.pending.pop_front().unwrap();
-        let error = app
-            .accept_import(&p, distinct_proof(3, 43, "甲"), &egui::Context::default())
-            .unwrap_err();
-        assert!(
-            app.questions[2].proof.is_none(),
-            "a different valid response cannot substitute for the saved proof"
-        );
-        app.reject_import(p, error);
-        assert!(app.ready.is_none());
-        assert!(app.records.is_empty());
-        assert!(
-            app.questions
-                .iter()
-                .all(|q| q.active() && q.proof.is_none())
-        );
-        app.flush_checkpoint(&mut storage);
-        let saved: StoredDraft = eframe::get_value(&storage, DRAFT_KEY).unwrap();
-        assert!(saved.proofs.iter().all(Option::is_none));
-    }
-    #[test]
-    fn draft_engine_failure_preserves_unverified_progress_across_restart_and_retry() {
-        let mut storage = MemoryStorage::default();
-        let original = distinct_proof(1, 70, "甲");
-        let first = distinct_proof(1, 71, "甲");
-        let second = distinct_proof(2, 72, "甲");
-        eframe::set_value(&mut storage, SAVE_KEY, &vec![original.certificate.clone()]);
-        eframe::set_value(
-            &mut storage,
-            DRAFT_KEY,
-            &StoredDraft {
-                team: "甲".into(),
-                editing_record: Some(original.id()),
-                active: [true, true, false],
-                proofs: [
-                    Some(first.certificate.clone()),
-                    Some(second.certificate.clone()),
-                    None,
-                ],
-            },
-        );
-        let mut app = application(Some(&storage));
-        let p = app.pending.pop_front().unwrap();
-        app.fail_task(
-            Task {
-                kind: Kind::Import,
-                import: Some(p),
-            },
-            "计算组件暂时无法加载".into(),
-        );
-        assert!(
-            app.imports_paused,
-            "do not repeatedly retry a failing worker"
-        );
-        assert!(
-            !app.busy(),
-            "the existing generate button must remain available for retry"
-        );
-        assert!(app.questions.iter().any(Question::active));
-        assert_eq!(
-            app.pending.len(),
-            3,
-            "preserve the failed item and the rest of the queue"
-        );
-        assert_eq!(
-            app.pending.front().unwrap().imported.certificate,
-            first.certificate
-        );
-        assert!(app.questions.iter().all(|q| q.proof.is_none()));
-        assert!(app.ready.is_none());
-        assert!(
-            app.import_failures.is_empty(),
-            "component failures are not invalid-certificate results"
-        );
-        assert!(app.questions[0].error.contains("已保存进度未能验证"));
-        assert!(app.status.contains("可重试或重新选择 CSV"));
-        app.flush_checkpoint(&mut storage);
-        let saved: StoredDraft = eframe::get_value(&storage, DRAFT_KEY).unwrap();
-        assert_eq!(saved.proofs[0], Some(first.certificate.clone()));
-        assert_eq!(saved.proofs[1], Some(second.certificate.clone()));
-        assert_eq!(
-            eframe::get_value::<Vec<Value>>(&storage, SAVE_KEY).unwrap(),
-            vec![original.certificate.clone()]
-        );
-
-        let mut reopened = application(Some(&storage));
-        assert!(
-            !reopened.imports_paused,
-            "reopening automatically retries stored public proofs"
-        );
-        assert!(reopened.questions.iter().all(|q| q.proof.is_none()));
-        assert!(reopened.ready.is_none());
-        finish_next_recovery(&mut reopened);
-        assert_eq!(
-            reopened.questions[0].proof.as_ref().unwrap().id(),
-            first.id()
-        );
-        assert!(
-            reopened.ready.is_none(),
-            "the other proof is still unverified"
-        );
-        finish_next_recovery(&mut reopened);
-        assert_eq!(
-            reopened.questions[1].proof.as_ref().unwrap().id(),
-            second.id()
-        );
-        assert!(reopened.ready.is_some());
-        finish_next_recovery(&mut reopened);
-        assert_eq!(reopened.records.len(), 1);
-        assert_eq!(
-            reopened.records[0].id(),
-            original.id(),
-            "restoring progress does not replace the original record"
-        );
-        reopened.flush_checkpoint(&mut storage);
-        let saved: StoredDraft = eframe::get_value(&storage, DRAFT_KEY).unwrap();
-        assert_eq!(saved.proofs[0], Some(first.certificate));
-        assert_eq!(saved.proofs[1], Some(second.certificate));
-    }
-    #[test]
-    fn renamed_draft_keeps_original_and_stale_team_proofs_are_not_persisted() {
+    fn renaming_keeps_original_and_rejects_old_team_proofs() {
         let mut app = application(None);
         let original = distinct_proof(1, 50, "甲");
         app.add_record(original.clone());
         app.use_certificate(&original).unwrap();
         app.team = "乙".into();
         app.invalidate_generated();
-        assert!(app.stored_draft().proofs[0].is_none());
         assert!(app.accept_proof(0, original.clone()).is_err());
         let renamed = distinct_proof(1, 51, "乙");
         app.accept_proof(0, renamed.clone()).unwrap();
         app.batch = Some(empty_batch());
-        app.next_batch(&egui::Context::default());
+        app.next_batch(&test_context());
         assert_eq!(app.records.len(), 2);
         assert_eq!(app.records[0].id(), renamed.id());
         assert_eq!(app.records[1].id(), original.id());
     }
     #[test]
     fn successful_replacement_also_removes_original_waiting_for_reverification() {
-        let ctx = egui::Context::default();
+        let ctx = test_context();
         let mut app = application(None);
         let original = distinct_proof(1, 60, "甲");
         app.team = "甲".into();
