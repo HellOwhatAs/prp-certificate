@@ -1545,7 +1545,7 @@ dependencies = [
 
 [[package]]
 name = "flight-ui"
-version = "0.4.7"
+version = "0.4.8"
 dependencies = [
  "base64 0.22.1",
  "console_error_panic_hook",
