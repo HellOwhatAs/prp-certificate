@@ -8,6 +8,7 @@ const MUTED: Color32 = Color32::from_rgb(98, 119, 119);
 const RULE: Color32 = Color32::from_rgb(224, 233, 229);
 const CELL_PADDING: f32 = 12.0;
 const MIN_COLUMN_WIDTH: f32 = 76.0;
+const ROW_NUMBER_PADDING: f32 = 8.0;
 
 /// Parsed data and browsing positions belong to the current application session.
 #[derive(Default)]
@@ -28,8 +29,10 @@ struct CachedCsv {
 
 struct TableLayout {
     font: FontId,
+    number_font: FontId,
     pixels_per_point: f32,
     column_edges: Vec<f32>,
+    gutter_width: f32,
     row_height: f32,
 }
 
@@ -74,33 +77,83 @@ impl CsvViewer {
                 .max_height((available.y - header_height).max(0.0))
                 .scroll_offset(file.scroll_offset)
                 .show_rows(ui, layout.row_height, file.data.rows.len(), |ui, rows| {
-                    ui.set_min_width(layout.width());
+                    let content_width = layout.gutter_width + layout.width();
+                    ui.set_min_width(content_width);
                     let content_left = ui.max_rect().left();
+                    let mut data_clip = ui.clip_rect();
+                    data_clip.min.x = (header_rect.left() + layout.gutter_width)
+                        .max(data_clip.left())
+                        .min(data_clip.right());
+                    let painter = ui.painter().with_clip_rect(data_clip);
+                    let mut visible_rows = Vec::new();
                     for row_index in rows {
                         let (rect, _) = ui.allocate_exact_size(
-                            egui::vec2(layout.width(), layout.row_height),
+                            egui::vec2(content_width, layout.row_height),
                             Sense::hover(),
                         );
                         if !rect.intersects(ui.clip_rect()) {
                             continue;
                         }
+                        visible_rows.push((row_index, rect));
+                        let data_rect = Rect::from_min_max(
+                            rect.min + egui::vec2(layout.gutter_width, 0.0),
+                            rect.max,
+                        );
                         let background = if row_index % 2 == 0 {
                             Color32::WHITE
                         } else {
                             Color32::from_rgb(250, 252, 251)
                         };
-                        ui.painter().rect_filled(rect, 0.0, background);
-                        paint_record(ui.painter(), rect, &file.data.rows[row_index], layout, INK);
+                        painter.rect_filled(data_rect, 0.0, background);
+                        paint_record(&painter, data_rect, &file.data.rows[row_index], layout, INK);
                     }
-                    content_left
+                    // Reserve the gutter above cells but below ScrollArea's floating bars.
+                    let gutter_shape = ui.painter().add(egui::Shape::Noop);
+                    (content_left, visible_rows, gutter_shape)
                 });
             file.scroll_offset = output.state.offset;
+            let (content_left, visible_rows, gutter_shape) = output.inner;
+            let gutter_rect = Rect::from_min_max(
+                output.inner_rect.min,
+                egui::pos2(
+                    (output.inner_rect.left() + layout.gutter_width)
+                        .min(output.inner_rect.right()),
+                    output.inner_rect.bottom(),
+                ),
+            );
+            let gutter_painter = ui
+                .painter()
+                .with_clip_rect(output.inner_rect.intersect(ui.clip_rect()));
+            let mut gutter = Vec::with_capacity(visible_rows.len() + 2);
+            gutter.push(egui::Shape::rect_filled(
+                gutter_rect,
+                0.0,
+                super::CONTENT_HEADER_BACKGROUND,
+            ));
+            for (row_index, rect) in visible_rows {
+                let number = gutter_painter.layout_no_wrap(
+                    (row_index + 1).to_string(),
+                    layout.number_font.clone(),
+                    MUTED,
+                );
+                let position = egui::pos2(
+                    gutter_rect.right() - ROW_NUMBER_PADDING - number.size().x,
+                    rect.center().y - number.size().y / 2.0,
+                );
+                gutter.push(egui::Shape::galley(position, number, MUTED));
+            }
+            gutter.push(egui::Shape::line_segment(
+                [gutter_rect.right_top(), gutter_rect.right_bottom()],
+                Stroke::new(1.0_f32, RULE),
+            ));
+            // Pure paint keeps wheel and touch scrolling active over the row numbers.
+            gutter_painter.set(gutter_shape, egui::Shape::Vec(gutter));
 
             // Paint after the body so its scrolling clip margin cannot bleed into the header.
             ui.painter()
                 .rect_filled(header_rect, 0.0, super::CONTENT_HEADER_BACKGROUND);
             let header_clip = Rect::from_min_max(
-                egui::pos2(output.inner_rect.left(), header_rect.top()),
+                egui::pos2(gutter_rect.right(), header_rect.top()),
                 egui::pos2(output.inner_rect.right(), header_rect.bottom()),
             )
             .intersect(header_rect)
@@ -109,7 +162,7 @@ impl CsvViewer {
             // Use this frame's rendered origin: ScrollArea's returned offset may
             // already include wheel input that will move the rows on the next frame.
             let scrolled_header = Rect::from_min_size(
-                egui::pos2(output.inner, header_rect.top()),
+                egui::pos2(content_left + layout.gutter_width, header_rect.top()),
                 egui::vec2(layout.width(), header_rect.height()),
             );
             paint_record(
@@ -118,6 +171,13 @@ impl CsvViewer {
                 &file.data.headers,
                 layout,
                 ACCENT,
+            );
+            ui.painter().line_segment(
+                [
+                    egui::pos2(gutter_rect.right(), header_rect.top()),
+                    egui::pos2(gutter_rect.right(), header_rect.bottom()),
+                ],
+                Stroke::new(1.0_f32, RULE),
             );
             ui.painter().line_segment(
                 [header_rect.left_bottom(), header_rect.right_bottom()],
@@ -130,6 +190,15 @@ impl CsvViewer {
 impl TableLayout {
     fn new(ui: &egui::Ui, data: &CsvData, font: FontId, pixels_per_point: f32) -> Self {
         let mut widths = vec![MIN_COLUMN_WIDTH; data.headers.len()];
+        let number_font = FontId::monospace((font.size - 2.0).max(12.0));
+        let gutter_width = (ui
+            .painter()
+            .layout_no_wrap(data.rows.len().max(1).to_string(), number_font.clone(), MUTED)
+            .size()
+            .x
+            + 2.0 * ROW_NUMBER_PADDING)
+            .ceil()
+            .max(44.0);
         // Repeated location IDs and distance values only need measuring once.
         let mut measured: HashMap<&str, f32> = HashMap::new();
         ui.fonts_mut(|fonts| {
@@ -153,8 +222,10 @@ impl TableLayout {
         Self {
             row_height: font.size + 16.0,
             font,
+            number_font,
             pixels_per_point,
             column_edges,
+            gutter_width,
         }
     }
 
@@ -285,12 +356,24 @@ mod tests {
         id: &'static str,
         bytes: &'static [u8],
     ) -> egui::FullOutput {
+        draw_with_events(viewer, ctx, id, bytes, 640.0, vec![])
+    }
+
+    fn draw_with_events(
+        viewer: &mut CsvViewer,
+        ctx: &egui::Context,
+        id: &'static str,
+        bytes: &'static [u8],
+        width: f32,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
         ctx.run(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(
                     egui::Pos2::ZERO,
-                    egui::vec2(640.0, 360.0),
+                    egui::vec2(width, 360.0),
                 )),
+                events,
                 ..Default::default()
             },
             |ctx| {
@@ -299,15 +382,56 @@ mod tests {
         )
     }
 
+    fn text_rects(output: &egui::FullOutput) -> Vec<(&str, Rect, Rect)> {
+        fn collect<'a>(
+            shape: &'a egui::Shape,
+            clip: Rect,
+            result: &mut Vec<(&'a str, Rect, Rect)>,
+        ) {
+            match shape {
+                egui::Shape::Text(text) => result.push((
+                    text.galley.text(),
+                    Rect::from_min_size(text.pos, text.galley.size()),
+                    clip,
+                )),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, clip, result);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut result = Vec::new();
+        for shape in &output.shapes {
+            collect(&shape.shape, shape.clip_rect, &mut result);
+        }
+        result
+    }
+
     fn painted_text(output: &egui::FullOutput) -> Vec<&str> {
-        output
-            .shapes
-            .iter()
-            .filter_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) => Some(text.galley.text()),
-                _ => None,
-            })
+        text_rects(output)
+            .into_iter()
+            .map(|(text, _, _)| text)
             .collect()
+    }
+
+    fn label(output: &egui::FullOutput, expected: &str) -> (Rect, Rect) {
+        text_rects(output)
+            .into_iter()
+            .find_map(|(text, rect, clip)| (text == expected).then_some((rect, clip)))
+            .unwrap_or_else(|| panic!("missing table label: {expected}"))
+    }
+
+    fn wheel(position: egui::Pos2, delta: Vec2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(position),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
     }
 
     #[test]
@@ -317,6 +441,12 @@ mod tests {
         let first = draw(&mut viewer, &ctx, "q2", PEOPLE_Q2);
         let text = painted_text(&first);
         assert!(text.contains(&"P0001"));
+        assert!(text.contains(&"1"));
+        assert!(!text.contains(&"0"));
+        assert!(
+            (label(&first, "1").0.center().y - label(&first, "P0001").0.center().y).abs()
+                < 0.1
+        );
         assert!(text.len() < 100, "only visible records should be painted");
 
         let file = viewer.files.get_mut("q2").unwrap().as_mut().unwrap();
@@ -329,16 +459,115 @@ mod tests {
             "the final record must be reachable"
         );
         assert!(!text.contains(&"P0001"));
+        assert!(text.contains(&"4000"));
+        assert!(!text.contains(&"4001"));
+        assert!(
+            (label(&last, "4000").0.center().y - label(&last, "P4000").0.center().y).abs()
+                < 0.1
+        );
         assert!(text.len() < 100);
         let q2_offset = viewer.files["q2"].as_ref().unwrap().scroll_offset;
 
         let other = draw(&mut viewer, &ctx, "q1", PEOPLE_Q1);
         assert!(painted_text(&other).contains(&"P0002"));
+        assert!(
+            (label(&other, "1").0.center().y - label(&other, "P0002").0.center().y).abs()
+                < 0.1
+        );
         let restored = draw(&mut viewer, &ctx, "q2", PEOPLE_Q2);
         assert!(painted_text(&restored).contains(&"P4000"));
         assert_eq!(
             viewer.files["q2"].as_ref().unwrap().scroll_offset,
             q2_offset
         );
+
+        let (_, body_clip) = label(&restored, "4000");
+        let gutter_width = viewer.files["q2"]
+            .as_ref()
+            .unwrap()
+            .layout
+            .as_ref()
+            .unwrap()
+            .gutter_width;
+        let over_gutter = egui::pos2(body_clip.left() + gutter_width / 2.0, body_clip.center().y);
+        draw_with_events(
+            &mut viewer,
+            &ctx,
+            "q2",
+            PEOPLE_Q2,
+            640.0,
+            wheel(over_gutter, egui::vec2(0.0, 120.0)),
+        );
+        assert!(
+            viewer.files["q2"].as_ref().unwrap().scroll_offset.y < q2_offset.y,
+            "wheel input over the fixed row numbers must scroll the table"
+        );
+    }
+
+    #[test]
+    fn horizontal_scrolling_keeps_row_numbers_fixed_and_headers_aligned() {
+        let ctx = egui::Context::default();
+        let mut viewer = CsvViewer::default();
+        let draw_table = |viewer: &mut CsvViewer, events| {
+            draw_with_events(viewer, &ctx, "q3", PEOPLE_Q3, 640.0, events)
+        };
+        for _ in 0..3 {
+            draw_table(&mut viewer, vec![]);
+        }
+        let first = draw_table(&mut viewer, vec![]);
+        let (number, body_clip) = label(&first, "1");
+        let layout = viewer.files["q3"]
+            .as_ref()
+            .unwrap()
+            .layout
+            .as_ref()
+            .unwrap();
+        let gutter_right = body_clip.left() + layout.gutter_width;
+        let content_width = layout.gutter_width + layout.width();
+        let first_column_x = label(&first, "earliest_pickup_time").0.left();
+        let over_gutter = egui::pos2(
+            (body_clip.left() + gutter_right) / 2.0,
+            number.center().y,
+        );
+        let wheel_frame = draw_table(
+            &mut viewer,
+            wheel(over_gutter, egui::vec2(-160.0, 0.0)),
+        );
+        assert!(viewer.files["q3"].as_ref().unwrap().scroll_offset.x > 0.0);
+        let next_frame = draw_table(&mut viewer, vec![]);
+        for frame in [&wheel_frame, &next_frame] {
+            assert!((label(frame, "1").0.right() - number.right()).abs() < 0.1);
+            for (header, value) in [
+                ("earliest_pickup_time", "2026-08-05 08:33"),
+                ("latest_arrival_time", "2026-08-06 09:40"),
+            ] {
+                let (heading, heading_clip) = label(frame, header);
+                let (cell, cell_clip) = label(frame, value);
+                assert!(
+                    (heading.left() - cell.left()).abs() < 0.1,
+                    "header and data must use the same frame's scroll origin"
+                );
+                assert!(heading_clip.left() >= gutter_right);
+                assert!(cell_clip.left() >= gutter_right);
+            }
+        }
+        assert!(label(&next_frame, "earliest_pickup_time").0.left() < first_column_x);
+
+        let draw_narrow = |viewer: &mut CsvViewer| {
+            draw_with_events(viewer, &ctx, "q3", PEOPLE_Q3, 320.0, vec![])
+        };
+        viewer.files.get_mut("q3").unwrap().as_mut().unwrap().scroll_offset.x = 0.0;
+        let narrow_start = draw_narrow(&mut viewer);
+        let narrow_number = label(&narrow_start, "1").0;
+        let file = viewer.files.get_mut("q3").unwrap().as_mut().unwrap();
+        file.scroll_offset.x = content_width;
+        draw_narrow(&mut viewer);
+        let right_edge = draw_narrow(&mut viewer);
+        let (heading, clip) = label(&right_edge, "task_type");
+        assert!(
+            heading.right() <= clip.right(),
+            "the final column must be fully reachable after reserving the gutter"
+        );
+        assert!((label(&right_edge, "1").0.right() - narrow_number.right()).abs() < 0.1);
     }
 }
