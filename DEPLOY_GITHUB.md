@@ -77,16 +77,16 @@ Release 的 `prp-certificate-pages.zip` 使用该版本标签实际对应的提�
 代码和三个参数包全部上传后，创建一个新版本标签：
 
 ```sh
-git tag v0.4.7
-git push origin v0.4.7
+git tag v0.4.8
+git push origin v0.4.8
 ```
 
 这会触发 **Actions → Build and publish Release**。以后使用新的版本号，例如 `v0.4.8`；不要覆盖旧标签。0.4.7 是实现和回归改进，固定证明协议、验证密钥和参数保持不变。
 
-也可在 Actions 手动重建一个**已经推送到仓库**的标签。工作流版本与构建标签应匹配：在 **Use workflow from** 中选择对应标签，并在 `tag` 输入框填写同一标签；若界面只提供分支选项，使用 CLI 指定标签上的工作流。例如重建已有的 `v0.4.6`：
+也可在 Actions 手动重建一个**已经推送到仓库**的标签。工作流版本与构建标签应匹配：在 **Use workflow from** 中选择对应标签，并在 `tag` 输入框填写同一标签；若界面只提供分支选项，使用 CLI 指定标签上的工作流。例如重建已有的 `v0.4.7`：
 
 ```sh
-gh workflow run release.yml --ref v0.4.6 -f tag=v0.4.6
+gh workflow run release.yml --ref v0.4.7 -f tag=v0.4.7
 ```
 
 新工作流在 `resolve` 阶段比较正在运行的 `release.yml` 与标签内的同名文件。内容不同会在启动六个平台及公共构建前停止，并给出上述匹配标签的运行命令；工作流内容相同但源码提交不同仍可继续。旧标签使用自身版本的工作流重建，所有构建仍固定到该标签的提交。
