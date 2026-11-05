@@ -1,4 +1,5 @@
 use crate::certificate::{self, Imported, Verified, fmt};
+use crate::materials::MaterialsPage;
 use crate::platform::{self, Backend, FileEvent, FileQueue};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use eframe::egui::{self, Color32, RichText};
@@ -19,6 +20,23 @@ const SLOT_KEYS: [&str; 2] = ["routes", "assignments"];
 const SAVE_KEY: &str = "prp-combined-certificates-v1";
 const LEGACY_DRAFT_KEY: &str = "prp-generation-draft-v1";
 const MAX_RECORDS: usize = 200;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+enum Page {
+    #[default]
+    Materials,
+    Generate,
+    Verify,
+    Records,
+}
+impl Page {
+    const NAVIGATION: [(Self, &'static str); 4] = [
+        (Self::Materials, "题目资料"),
+        (Self::Generate, "解答认证"),
+        (Self::Verify, "验证证书"),
+        (Self::Records, "证书记录"),
+    ];
+}
 
 #[derive(Default)]
 struct CsvFile {
@@ -97,7 +115,8 @@ struct ImportFailure {
 }
 
 pub struct FlightApp {
-    page: usize,
+    page: Page,
+    materials: MaterialsPage,
     editing_record: Option<String>,
     reset_scroll: bool,
     team: String,
@@ -174,7 +193,8 @@ impl FlightApp {
             .insert(egui::TextStyle::Heading, egui::FontId::proportional(25.0));
         cc.egui_ctx.set_style_of(egui::Theme::Light, style);
         let mut app = Self {
-            page: 0,
+            page: Page::default(),
+            materials: MaterialsPage::default(),
             editing_record: None,
             reset_scroll: false,
             team: String::new(),
@@ -476,7 +496,7 @@ impl FlightApp {
         self.reset_scroll = true;
         self.status.clear();
         self.error = false;
-        self.page = 0;
+        self.page = Page::Generate;
         Ok(())
     }
     fn invalidate_generated(&mut self) {
@@ -1274,7 +1294,7 @@ impl FlightApp {
                 match index {
                     0 => {
                         self.set_review(item.clone(), None, ui.ctx());
-                        self.page = 1;
+                        self.page = Page::Verify;
                         self.reset_scroll = true;
                     }
                     1 => {
@@ -1478,19 +1498,19 @@ impl FlightApp {
         }
     }
     fn navigation_buttons(&mut self, ui: &mut egui::Ui, width: f32) {
-        ui.spacing_mut().button_padding = egui::vec2(8.0, 8.0);
-        for (i, label) in ["生成证书", "验证证书", "证书记录"].iter().enumerate() {
+        ui.spacing_mut().button_padding = egui::vec2(if width < 80.0 { 4.0 } else { 8.0 }, 8.0);
+        for (page, label) in Page::NAVIGATION {
             if ui
                 .add_sized(
                     [width, 44.0],
                     egui::Button::selectable(
-                        self.page == i,
-                        RichText::new(*label).size(if width < 80.0 { 14.0 } else { 16.0 }),
+                        self.page == page,
+                        RichText::new(label).size(if width < 80.0 { 14.0 } else { 16.0 }),
                     ),
                 )
                 .clicked()
             {
-                self.page = i;
+                self.page = page;
             }
         }
     }
@@ -1503,27 +1523,43 @@ impl FlightApp {
             .size()
             .x;
         let width = ui.available_width();
-        if width >= title_width + 32.0 + 3.0 * 96.0 + 24.0 + 56.0 {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        if width >= title_width + 24.0 + 4.0 * 96.0 + 3.0 * 8.0 + 24.0 + 40.0 {
             ui.allocate_ui_with_layout(
                 egui::vec2(width, 44.0),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.label(title());
-                    ui.add_space(20.0);
+                    ui.add_space(16.0);
                     self.navigation_buttons(ui, 96.0);
-                    ui.add_space((ui.available_width() - 44.0).max(0.0));
+                    ui.add_space((ui.available_width() - 40.0).max(0.0));
                     self.storage_button(ui);
                 },
             );
         } else {
-            ui.label(title());
+            // Keep all four destinations on one line, with settings beside the title.
             ui.allocate_ui_with_layout(
                 egui::vec2(width, 44.0),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    self.navigation_buttons(ui, ((width - 80.0) / 3.0).min(120.0));
-                    ui.add_space((ui.available_width() - 44.0).max(0.0));
+                    ui.allocate_ui_with_layout(
+                        egui::vec2((width - 48.0).max(0.0), 44.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.add(egui::Label::new(title()).wrap());
+                        },
+                    );
                     self.storage_button(ui);
+                },
+            );
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, 44.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    let gap = if width < 360.0 { 4.0 } else { 8.0 };
+                    ui.spacing_mut().item_spacing.x = gap;
+                    self.navigation_buttons(ui, (width - 3.0 * gap) / 4.0);
                 },
             );
         }
@@ -1537,11 +1573,16 @@ impl eframe::App for FlightApp {
         } else {
             350
         }));
+        let horizontal_margin = if ctx.content_rect().width() < 600.0 {
+            12
+        } else {
+            24
+        };
         egui::TopBottomPanel::top("navigation")
             .frame(
                 egui::Frame::new()
                     .fill(Color32::WHITE)
-                    .inner_margin(egui::Margin::symmetric(24, 18)),
+                    .inner_margin(egui::Margin::symmetric(horizontal_margin, 18)),
             )
             .show(ctx, |ui| {
                 if self.storage_open {
@@ -1592,11 +1633,27 @@ impl eframe::App for FlightApp {
             .frame(
                 egui::Frame::new()
                     .fill(Color32::from_rgb(245, 248, 247))
-                    .inner_margin(egui::Margin::symmetric(24, 0)),
+                    .inner_margin(if self.page == Page::Materials {
+                        egui::Margin::ZERO
+                    } else {
+                        egui::Margin::symmetric(horizontal_margin, 0)
+                    }),
             )
             .show(ctx, |ui| {
                 if self.storage_open {
                     ui.disable();
+                }
+                if self.page == Page::Materials {
+                    // The reader owns both scroll axes and uses the remaining viewport height.
+                    if let Some((name, bytes)) = self.materials.ui(ui) {
+                        platform::save(
+                            name.into(),
+                            bytes.to_vec(),
+                            self.file_events.clone(),
+                            ctx.clone(),
+                        );
+                    }
+                    return;
                 }
                 let mut scroll = egui::ScrollArea::vertical()
                     .id_salt(("page-scroll", self.page))
@@ -1608,9 +1665,10 @@ impl eframe::App for FlightApp {
                     // Vertical breathing room belongs to the scrolling content, not its viewport.
                     ui.add_space(24.0);
                     match self.page {
-                        0 => self.generate_page(ui),
-                        1 => self.verify_page(ui),
-                        _ => self.board_page(ui),
+                        Page::Materials => unreachable!(),
+                        Page::Generate => self.generate_page(ui),
+                        Page::Verify => self.verify_page(ui),
+                        Page::Records => self.board_page(ui),
                     }
                     ui.add_space(24.0);
                 });
@@ -1675,6 +1733,149 @@ mod tests {
         assert_eq!(app.status, "证书已生成");
         assert!(app.ready.is_some());
     }
+    fn painted_label(output: &egui::FullOutput, label: &str) -> egui::Rect {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.visual_bounding_rect())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing label: {label}"))
+    }
+    fn pointer_button(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+    #[test]
+    fn four_navigation_tabs_fit_and_preserve_generation_input() {
+        for width in [320.0, 400.0, 1024.0] {
+            let ctx = test_context();
+            let mut app = FlightApp::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
+            assert_eq!(app.page, Page::Materials);
+            app.team = "甲".into();
+            let completed = proof(1);
+            app.questions[0].proof = Some(completed.clone());
+            app.questions[1].files = csv_pair("UNSAVED CSV CONTENTS");
+            app.questions[1].checked = Some(vec![1; 9]);
+            ctx.style_mut(|style| style.animation_time = 0.0);
+            let draw = |app: &mut FlightApp, events| {
+                ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 768.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::TopBottomPanel::top("navigation")
+                            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(
+                                if width < 600.0 { 12 } else { 24 },
+                                18,
+                            )))
+                            .show(ctx, |ui| app.navigation(ui));
+                        egui::CentralPanel::default().show(ctx, |_| {});
+                    },
+                )
+            };
+            for _ in 0..3 {
+                draw(&mut app, vec![]);
+            }
+            let output = draw(&mut app, vec![]);
+            let tabs = ["题目资料", "解答认证", "验证证书", "证书记录"]
+                .map(|label| painted_label(&output, label));
+            for rect in tabs {
+                assert!(
+                    rect.left() >= 0.0 && rect.right() <= width,
+                    "{width}: clipped navigation at {rect:?}"
+                );
+                assert!((rect.center().y - tabs[0].center().y).abs() < 1.0);
+            }
+            for pair in tabs.windows(2) {
+                assert!(pair[0].right() < pair[1].left());
+            }
+            for (label, page) in [
+                ("解答认证", Page::Generate),
+                ("题目资料", Page::Materials),
+                ("证书记录", Page::Records),
+                ("验证证书", Page::Verify),
+                ("解答认证", Page::Generate),
+            ] {
+                let pos = painted_label(&draw(&mut app, vec![]), label).center();
+                draw(
+                    &mut app,
+                    vec![egui::Event::PointerMoved(pos), pointer_button(pos, true)],
+                );
+                draw(&mut app, vec![pointer_button(pos, false)]);
+                assert_eq!(app.page, page, "{width}: {label}");
+            }
+            assert_eq!(app.team, "甲");
+            assert_eq!(
+                app.questions[0].proof.as_ref().unwrap().id(),
+                completed.id()
+            );
+            assert_eq!(app.questions[1].checked, Some(vec![1; 9]));
+            for file in &app.questions[1].files {
+                assert!(file.name.starts_with("PRIVATE-"));
+                assert_eq!(file.text, "UNSAVED CSV CONTENTS");
+            }
+        }
+    }
+    #[test]
+    fn record_actions_still_open_verification_and_generation() {
+        for (label, destination) in [("查看", Page::Verify), ("更新", Page::Generate)] {
+            let ctx = test_context();
+            let mut app = FlightApp::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
+            let record = proof(2);
+            app.page = Page::Records;
+            let draw = |app: &mut FlightApp, events| {
+                ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(400.0, 300.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            let (rect, _) = ui
+                                .allocate_exact_size(egui::vec2(296.0, 40.0), egui::Sense::hover());
+                            app.record_actions(ui, &record, rect);
+                        });
+                    },
+                )
+            };
+            for _ in 0..3 {
+                draw(&mut app, vec![]);
+            }
+            let pos = painted_label(&draw(&mut app, vec![]), label).center();
+            draw(
+                &mut app,
+                vec![egui::Event::PointerMoved(pos), pointer_button(pos, true)],
+            );
+            draw(&mut app, vec![pointer_button(pos, false)]);
+            assert_eq!(app.page, destination, "record action: {label}");
+            assert!(app.reset_scroll);
+            match destination {
+                Page::Verify => assert_eq!(app.review.as_ref().unwrap().item.id(), record.id()),
+                Page::Generate => {
+                    assert_eq!(app.editing_record, Some(record.id()));
+                    assert_eq!(app.questions[1].proof.as_ref().unwrap().id(), record.id());
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
     #[test]
     fn storage_modal_blocks_navigation_and_close_has_a_full_hoverable_hit_area() {
         use eframe::App;
@@ -1726,7 +1927,11 @@ mod tests {
             ],
         );
         draw(&mut app, vec![pointer(navigation, false)]);
-        assert_eq!(app.page, 0, "the modal must block background navigation");
+        assert_eq!(
+            app.page,
+            Page::Materials,
+            "the modal must block background navigation"
+        );
         app.storage_open = true;
         for _ in 0..3 {
             draw(&mut app, vec![]);
@@ -1760,7 +1965,11 @@ mod tests {
             ],
         );
         draw(&mut app, vec![pointer(navigation, false)]);
-        assert_eq!(app.page, 1, "background navigation resumes after closing");
+        assert_eq!(
+            app.page,
+            Page::Verify,
+            "background navigation resumes after closing"
+        );
     }
 
     #[test]

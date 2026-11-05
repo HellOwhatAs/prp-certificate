@@ -4,6 +4,10 @@ Rust / egui 网页与跨平台桌面应用。导入航线、人员分配 CSV，�
 
 ## 使用
 
+启动后首先显示“题目资料”：直接阅读原始 `problem.pdf`，或切换到 `distances.csv`、`peopleQ1.csv`、`peopleQ2.csv`、`peopleQ3.csv` 查看完整数据。文件名标签采用顶部细线标识当前文件，右侧保存图标只保存当前原始文件；窄屏下可横向滑动标签，保存图标始终可见。资料随应用内置，阅读和保存不需要另行下载题目数据。
+
+PDF 以居中单列连续滚动方式阅读，桌面默认使用舒适页宽，窄屏自动适配；可缩放或选择“适合宽度”。数据表保留原始表头，左侧固定显示从 1 开始的数据行号，支持横向与纵向滚动。切换文件时保留当前会话内的阅读位置与 PDF 缩放。用于提交方案的航线和人员分配模板仍在“解答认证”页各小问下下载。
+
 三个小问在同一页面分别选择航线表和人员分配表，共用队伍署名。可提交任意一至三问，未提交的小问在证书对应位置留白。文件不完整或校验失败会报错，不能自动当作未提交。
 
 生成前先校验所有已提交方案，再逐问生成证明，最后保存一张三合一 PNG。在“证书记录”中点击“更新”，回填队名和已有成绩，再补充或替换各问方案。原始 CSV 不保存在记录中。每问可分别“校验”或“清空”；修改文件、清空小问或修改队名后，需要重新生成才可导出。其他未修改小问的证明仍可复用。改回原队名可继续复用其证明；新队名需要对应的新证明。生成成功后更新同队名的原记录，改名生成则另存记录，失败或取消不改变原记录。页面底部并排提供“生成证书”和“导出证书”，导出文件为 PNG。仅校验不会生成二维码。第三问人员表列出全部 4000 人，未服务的临时人员安排字段留空。
@@ -27,7 +31,7 @@ Rust / egui 网页与跨平台桌面应用。导入航线、人员分配 CSV，�
 - 三问参数来自原有固定初始化，SHA-256 与原项目一致；本次未重做参数初始化，未改题目规则或单问证明约束。
 - 下载包分为源码、三个参数 ZIP、一个可选的预构建 Pages ZIP。源码包和三个参数包合并后才是可完整部署的项目。
 
-网页 JavaScript 仅负责 WASM 装载、公开证明组件的下载缓存和可取消 Worker；CSV 方案、证书与计算任务均在本机处理。Pages 构建只包含约 30 MB 的静态文件。参数从同一公开仓库的 `raw.githubusercontent.com` 读取，Actions 固定到该次提交 SHA；不依赖旧 Sites 站点。网页参数自动按需下载。桌面端也会在首次生成相应小问时自动下载并缓存，逐片校验长度和 SHA-256；不在启动时下载全部三问。
+网页 JavaScript 仅负责 WASM 装载、公开证明组件的下载缓存和可取消 Worker；CSV 方案、证书与计算任务均在本机处理。Pages 构建包含界面、题目资料、校验和证明引擎等静态文件。参数从同一公开仓库的 `raw.githubusercontent.com` 读取，Actions 固定到该次提交 SHA；不依赖旧 Sites 站点。网页参数自动按需下载。桌面端也会在首次生成相应小问时自动下载并缓存，逐片校验长度和 SHA-256；不在启动时下载全部三问。
 
 三问首次生成约下载 229 / 428 / 456 MB，按 4 MiB 分片校验并缓存；仅校验方案或验证证书不需要下载大参数。网络需能访问 GitHub Raw，首次生成仍受下载带宽影响。网页建议 64 位桌面浏览器、WebGL2 和至少 8 GB 内存。
 
@@ -87,7 +91,7 @@ Release 工作流通过 `FLIGHT_PARAMETER_REPOSITORY` 和 `FLIGHT_PARAMETER_REF`
 
 - `crates/flight-core`：CSV 校验器、原生 R1CS 约束、arkworks Groth16 BN254 生成与固定密钥验证。
 - `crates/flight-format`：严格元信息、二进制证书载荷，独立于证明与界面。
-- `crates/flight-ui`：egui、素色证书、标准 QR 编解码。
+- `crates/flight-ui`：egui、hayro PDF 阅读与原始数据预览、素色证书、标准 QR 编解码。
 - `public/groth16`：每问固定公开参数分片、验证密钥和 SHA-256 清单。
 - `circuits`：迁移前 Noir 规则参考；不参与当前运行或构建。
 - `src/checker.js`：独立旧校验器，仅用于开发回归。
@@ -121,6 +125,7 @@ cargo build --locked --release -p flight-core --bin flight-engine
 python scripts/test-certificates.py
 npm run build:rust
 node scripts/test-web-release.mjs
+node scripts/test-materials.mjs --built dist/client
 node scripts/test-carrier.mjs
 ```
 
@@ -175,4 +180,4 @@ REFERENCE_DIR=/path/to/private/trial_solve npm test
 
 `scripts/test-web-threads.mjs` 的完整浏览器生成需安装 Playwright 1.62.1 和 Chromium：`npm install --no-save --package-lock=false playwright@1.62.1`、`npx playwright install chromium`。Node 仅作为开发测试宿主，不进入应用运行依赖。
 
-字体使用 Noto Sans SC（SIL OFL 1.1）。依赖版本锁定于 Cargo.lock，许可证与置换网络来源见 public/THIRD_PARTY_LICENSES.txt。
+字体使用 Noto Sans SC（SIL OFL 1.1）。依赖版本锁定于 Cargo.lock，许可证与置换网络来源见 `public/THIRD_PARTY_LICENSES.txt`；题目资料阅读器新增依赖及其内嵌资源的声明见 `public/MATERIALS_THIRD_PARTY_LICENSES.txt`。两份声明均随网页与桌面发行包提供。
