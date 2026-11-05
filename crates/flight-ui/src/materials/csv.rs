@@ -2,10 +2,8 @@ use std::{borrow::Cow, collections::HashMap};
 
 use eframe::egui::{self, Color32, FontId, Painter, Rect, Sense, Stroke, Vec2};
 
-const ACCENT: Color32 = Color32::from_rgb(27, 118, 106);
-const INK: Color32 = Color32::from_rgb(29, 54, 59);
-const MUTED: Color32 = Color32::from_rgb(98, 119, 119);
-const RULE: Color32 = Color32::from_rgb(224, 233, 229);
+use crate::theme::{ACCENT, BACKGROUND, INK, MUTED, RULE, SURFACE};
+
 const CELL_PADDING: f32 = 12.0;
 const MIN_COLUMN_WIDTH: f32 = 76.0;
 const ROW_NUMBER_PADDING: f32 = 8.0;
@@ -100,7 +98,7 @@ impl CsvViewer {
                             rect.max,
                         );
                         let background = if row_index % 2 == 0 {
-                            Color32::WHITE
+                            SURFACE
                         } else {
                             Color32::from_rgb(250, 252, 251)
                         };
@@ -128,7 +126,7 @@ impl CsvViewer {
             gutter.push(egui::Shape::rect_filled(
                 gutter_rect,
                 0.0,
-                super::CONTENT_HEADER_BACKGROUND,
+                BACKGROUND,
             ));
             for (row_index, rect) in visible_rows {
                 let number = gutter_painter.layout_no_wrap(
@@ -151,7 +149,7 @@ impl CsvViewer {
 
             // Paint after the body so its scrolling clip margin cannot bleed into the header.
             ui.painter()
-                .rect_filled(header_rect, 0.0, super::CONTENT_HEADER_BACKGROUND);
+                .rect_filled(header_rect, 0.0, BACKGROUND);
             let header_clip = Rect::from_min_max(
                 egui::pos2(gutter_rect.right(), header_rect.top()),
                 egui::pos2(output.inner_rect.right(), header_rect.bottom()),

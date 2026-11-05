@@ -3,6 +3,8 @@ mod carrier;
 pub mod certificate;
 mod materials;
 mod platform;
+mod theme;
+mod widgets;
 pub use app::FlightApp;
 
 // Image decoding and verification run in a disposable worker / child process.

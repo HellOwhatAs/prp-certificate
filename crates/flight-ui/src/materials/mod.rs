@@ -1,14 +1,11 @@
 mod csv;
 mod pdf;
 
-use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
+use eframe::egui::{self, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 
-const ACCENT: Color32 = Color32::from_rgb(27, 118, 106);
-const INK: Color32 = Color32::from_rgb(29, 54, 59);
-const MUTED: Color32 = Color32::from_rgb(98, 119, 119);
-const BORDER: Color32 = Color32::from_rgb(211, 222, 216);
-const TAB_BACKGROUND: Color32 = Color32::from_rgb(237, 242, 239);
-const CONTENT_HEADER_BACKGROUND: Color32 = Color32::from_rgb(245, 248, 247);
+use crate::theme::{ACCENT, BACKGROUND, BORDER, INK, MUTED, RECESSED, SURFACE};
+use crate::widgets;
+
 const ROW_HEIGHT: f32 = 44.0;
 
 struct MaterialFile {
@@ -51,7 +48,7 @@ impl MaterialsPage {
     /// A save request is returned synchronously to preserve browser user activation.
     pub(crate) fn ui(&mut self, ui: &mut egui::Ui) -> Option<(&'static str, &'static [u8])> {
         let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
-        ui.painter().rect_filled(rect, 0.0, Color32::WHITE);
+        ui.painter().rect_filled(rect, 0.0, SURFACE);
         let mut workspace = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt("materials-workspace")
@@ -74,7 +71,7 @@ impl MaterialsPage {
     fn file_bar(&mut self, ui: &mut egui::Ui) -> egui::Response {
         let (bar, _) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), Sense::hover());
-        ui.painter().rect_filled(bar, 0.0, TAB_BACKGROUND);
+        ui.painter().rect_filled(bar, 0.0, RECESSED);
         ui.painter()
             .hline(bar.x_range(), bar.bottom(), Stroke::new(1.0_f32, BORDER));
 
@@ -138,31 +135,16 @@ impl MaterialsPage {
                 );
             });
 
+        let response = ui.interact(save_rect, ui.id().with("save-material"), Sense::click());
+        let label = format!("保存 {}", FILES[self.selected].name);
+        let response = widgets::icon_button(ui, response, &label, false);
+        save_icon(ui.painter(), save_rect.center());
         ui.painter().vline(
             save_rect.left(),
             save_rect.y_range(),
             Stroke::new(1.0_f32, BORDER),
         );
-        let response = ui.interact(save_rect, ui.id().with("save-material"), Sense::click());
-        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-        if response.hovered() || response.has_focus() {
-            ui.painter()
-                .rect_filled(save_rect.shrink(5.0), 4.0, Color32::from_rgb(219, 233, 225));
-        }
-        if response.has_focus() {
-            ui.painter().rect_stroke(
-                save_rect.shrink(4.0),
-                4.0,
-                Stroke::new(1.0_f32, ACCENT),
-                egui::StrokeKind::Inside,
-            );
-        }
-        save_icon(ui.painter(), save_rect.center());
-        let label = format!("保存 {}", FILES[self.selected].name);
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
-        });
-        response.on_hover_text(label)
+        response
     }
 }
 
@@ -184,11 +166,11 @@ fn file_tab(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
     });
     if ui.is_rect_visible(rect) {
         let fill = if selected {
-            CONTENT_HEADER_BACKGROUND
+            BACKGROUND
         } else if response.hovered() {
-            Color32::from_rgb(226, 235, 230)
+            ui.visuals().widgets.hovered.weak_bg_fill
         } else {
-            TAB_BACKGROUND
+            RECESSED
         };
         ui.painter().rect_filled(rect, 0.0, fill);
         ui.painter()

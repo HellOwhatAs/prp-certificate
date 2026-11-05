@@ -26,6 +26,8 @@ jobs:
         with:
           python-version: '3.12'
       - uses: ./.github/actions/setup-web-build
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
       - run: npm ci
       - name: Validate data and every public parameter chunk
         run: python scripts/test-parameter-integrity.py
