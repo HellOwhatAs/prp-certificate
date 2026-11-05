@@ -50,15 +50,14 @@ impl MaterialsPage {
     /// A save request is returned synchronously to preserve browser user activation.
     pub(crate) fn ui(&mut self, ui: &mut egui::Ui) -> Option<(&'static str, &'static [u8])> {
         let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
-        ui.painter().rect_filled(rect, 3.0, Color32::WHITE);
-        let inner = rect.shrink(1.0);
+        ui.painter().rect_filled(rect, 0.0, Color32::WHITE);
         let mut workspace = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt("materials-workspace")
-                .max_rect(inner)
+                .max_rect(rect)
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
-        workspace.set_clip_rect(ui.clip_rect().intersect(inner));
+        workspace.set_clip_rect(ui.clip_rect().intersect(rect));
         workspace.spacing_mut().item_spacing = Vec2::ZERO;
         let save = self.file_bar(&mut workspace).clicked();
         if self.selected == 0 {
@@ -67,12 +66,6 @@ impl MaterialsPage {
             let file = &FILES[self.selected];
             self.csv.ui(&mut workspace, file.name, file.bytes);
         }
-        ui.painter().rect_stroke(
-            rect,
-            3.0,
-            Stroke::new(1.0_f32, BORDER),
-            egui::StrokeKind::Inside,
-        );
         let file = &FILES[self.selected];
         save.then_some((file.name, file.bytes))
     }

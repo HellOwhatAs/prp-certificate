@@ -1633,10 +1633,11 @@ impl eframe::App for FlightApp {
             .frame(
                 egui::Frame::new()
                     .fill(Color32::from_rgb(245, 248, 247))
-                    .inner_margin(egui::Margin::symmetric(
-                        horizontal_margin,
-                        if self.page == Page::Materials { 12 } else { 0 },
-                    )),
+                    .inner_margin(if self.page == Page::Materials {
+                        egui::Margin::ZERO
+                    } else {
+                        egui::Margin::symmetric(horizontal_margin, 0)
+                    }),
             )
             .show(ctx, |ui| {
                 if self.storage_open {
