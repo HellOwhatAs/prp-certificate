@@ -32,7 +32,7 @@ enum Page {
 impl Page {
     const NAVIGATION: [(Self, &'static str); 4] = [
         (Self::Materials, "题目资料"),
-        (Self::Generate, "生成证书"),
+        (Self::Generate, "解答认证"),
         (Self::Verify, "验证证书"),
         (Self::Records, "证书记录"),
     ];
@@ -1790,7 +1790,7 @@ mod tests {
                 draw(&mut app, vec![]);
             }
             let output = draw(&mut app, vec![]);
-            let tabs = ["题目资料", "生成证书", "验证证书", "证书记录"]
+            let tabs = ["题目资料", "解答认证", "验证证书", "证书记录"]
                 .map(|label| painted_label(&output, label));
             for rect in tabs {
                 assert!(
@@ -1803,11 +1803,11 @@ mod tests {
                 assert!(pair[0].right() < pair[1].left());
             }
             for (label, page) in [
-                ("生成证书", Page::Generate),
+                ("解答认证", Page::Generate),
                 ("题目资料", Page::Materials),
                 ("证书记录", Page::Records),
                 ("验证证书", Page::Verify),
-                ("生成证书", Page::Generate),
+                ("解答认证", Page::Generate),
             ] {
                 let pos = painted_label(&draw(&mut app, vec![]), label).center();
                 draw(
