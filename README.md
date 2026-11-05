@@ -40,7 +40,7 @@ PDF 以居中单列连续滚动方式阅读，桌面默认使用舒适页宽，�
 从源码构建网页需要 Node.js 24、Rust 1.99.1，以及多线程引擎单独使用的固定 nightly。仓库的 `rust-toolchain.toml` 固定普通引擎和界面的编译器版本；以下命令安装匹配的工具并启动预览：
 
 ```sh
-rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+rustup toolchain install 1.99.1 --profile minimal --component rustfmt --target wasm32-unknown-unknown
 rustup toolchain install nightly-2025-11-15 --profile minimal --component rust-src --target wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.105 --locked
 npm ci
@@ -114,9 +114,12 @@ Release 工作流通过 `FLIGHT_PARAMETER_REPOSITORY` 和 `FLIGHT_PARAMETER_REF`
 
 ## 验证与开发
 
+界面代码按职责组织：`crates/flight-ui/src/app.rs` 管理状态、任务与持久化，`app/views.rs` 绘制各页面，`app/storage.rs` 管理存储窗口，原有行为测试在 `app/tests.rs`。统一颜色、字体和圆角在 `theme.rs`，共用按钮和卡片在 `widgets.rs`；资料阅读器在 `materials/`。网页的 `web/bridge.js` 提供平台桥接接口，独立的 `web/pdf-renderer.js` 管理 PDF Worker，与证明任务 Worker 保持各自的生命周期。调整样式时优先修改共享主题或控件。
+
 仓库包含一个完全由公开数据生成的普通 Q1 可行方案：T3 机型、逐目的地运输、仅补充必要加油停靠，共 136 架次、23,638 航空器分钟。它不使用私有优化结果，生成器、CSV、固定九项成绩及真实 Groth16 证书都在 `tests/fixtures/` 中。Rust 和旧 JavaScript 校验器分别检查该方案及非法输入；原生端和构建出的 WASM 验证同一份固定密钥证书并拒绝篡改。
 
 ```sh
+cargo fmt --all --check
 node scripts/generate-public-fixture.mjs --check
 npm test
 cargo test --locked --workspace --release

@@ -7,12 +7,10 @@ use hayro::hayro_syntax::Pdf;
 use hayro::{PixmapSettings, RenderCache, RenderSettings};
 use std::time::Duration;
 
+use crate::theme::{ACCENT, BACKGROUND, BORDER, INK, MUTED, RECESSED};
+use crate::widgets;
+
 const PDF_BYTES: &[u8] = include_bytes!("../../../../public/problem.pdf");
-const ACCENT: Color32 = Color32::from_rgb(27, 118, 106);
-const INK: Color32 = Color32::from_rgb(29, 54, 59);
-const MUTED: Color32 = Color32::from_rgb(98, 119, 119);
-const PAPER_BORDER: Color32 = Color32::from_rgb(215, 224, 219);
-const READER_BACKGROUND: Color32 = Color32::from_rgb(236, 242, 238);
 const DEFAULT_PAGE_WIDTH: f32 = 900.0;
 const CSS_PIXELS_PER_POINT: f32 = 96.0 / 72.0;
 const PAGE_GAP: f32 = 18.0;
@@ -165,7 +163,7 @@ impl PdfViewer {
         let display_width = self.mode.page_width(available_width, natural_width);
         self.toolbar(ui, dimensions.len(), display_width / natural_width);
 
-        egui::Frame::new().fill(READER_BACKGROUND).show(ui, |ui| {
+        egui::Frame::new().fill(RECESSED).show(ui, |ui| {
             // Floating bars do not change the fit width as they appear/disappear.
             ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
             let viewport_width = ui.available_width();
@@ -261,7 +259,7 @@ impl PdfViewer {
                         ui.painter().rect_stroke(
                             rect,
                             0,
-                            Stroke::new(1.0_f32, PAPER_BORDER),
+                            Stroke::new(1.0_f32, BORDER),
                             StrokeKind::Outside,
                         );
                     }
@@ -274,7 +272,7 @@ impl PdfViewer {
 
     fn toolbar(&mut self, ui: &mut egui::Ui, pages: usize, zoom: f32) {
         let frame = egui::Frame::new()
-            .fill(super::CONTENT_HEADER_BACKGROUND)
+            .fill(BACKGROUND)
             .inner_margin(Margin::symmetric(10, 5))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
@@ -319,7 +317,7 @@ impl PdfViewer {
         ui.painter().hline(
             frame.response.rect.x_range(),
             frame.response.rect.bottom(),
-            Stroke::new(1.0_f32, PAPER_BORDER),
+            Stroke::new(1.0_f32, BORDER),
         );
     }
 
@@ -424,40 +422,31 @@ impl PdfViewer {
 }
 
 fn zoom_button(ui: &mut egui::Ui, plus: bool, enabled: bool) -> egui::Response {
-    let response = ui
-        .add_enabled_ui(enabled, |ui| {
-            let (rect, response) = ui.allocate_exact_size(vec2(28.0, 30.0), Sense::click());
-            let visuals = ui.style().interact(&response);
-            if response.hovered() || response.has_focus() {
-                ui.painter()
-                    .rect_filled(rect.shrink(1.0), 3, visuals.weak_bg_fill);
-            }
-            let color = if !enabled {
-                MUTED.gamma_multiply(0.5)
-            } else if response.hovered() {
-                ACCENT
-            } else {
-                INK
-            };
-            let center = rect.center();
+    ui.add_enabled_ui(enabled, |ui| {
+        let (rect, response) = ui.allocate_exact_size(vec2(28.0, 30.0), Sense::click());
+        let label = if plus { "放大" } else { "缩小" };
+        let response = widgets::icon_button(ui, response, label, false);
+        let color = if !enabled {
+            MUTED.gamma_multiply(0.5)
+        } else if response.hovered() {
+            ACCENT
+        } else {
+            INK
+        };
+        let center = rect.center();
+        ui.painter().line_segment(
+            [center - vec2(5.0, 0.0), center + vec2(5.0, 0.0)],
+            Stroke::new(1.5_f32, color),
+        );
+        if plus {
             ui.painter().line_segment(
-                [center - vec2(5.0, 0.0), center + vec2(5.0, 0.0)],
+                [center - vec2(0.0, 5.0), center + vec2(0.0, 5.0)],
                 Stroke::new(1.5_f32, color),
             );
-            if plus {
-                ui.painter().line_segment(
-                    [center - vec2(0.0, 5.0), center + vec2(0.0, 5.0)],
-                    Stroke::new(1.5_f32, color),
-                );
-            }
-            response
-        })
-        .inner;
-    let label = if plus { "放大" } else { "缩小" };
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled && ui.is_enabled(), label)
-    });
-    response.on_hover_text(label)
+        }
+        response
+    })
+    .inner
 }
 
 fn document() -> Result<Pdf, String> {

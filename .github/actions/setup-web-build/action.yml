@@ -6,6 +6,7 @@ runs:
     - uses: dtolnay/rust-toolchain@1.99.1
       with:
         targets: wasm32-unknown-unknown
+        components: rustfmt
     - name: Install pinned threaded WASM toolchain
       shell: bash
       run: rustup toolchain install nightly-2025-11-15 --profile minimal --component rust-src --target wasm32-unknown-unknown
