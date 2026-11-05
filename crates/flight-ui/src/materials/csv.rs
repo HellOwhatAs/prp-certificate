@@ -197,8 +197,7 @@ impl TableLayout {
             .size()
             .x
             + 2.0 * ROW_NUMBER_PADDING)
-            .ceil()
-            .max(44.0);
+            .ceil();
         // Repeated location IDs and distance values only need measuring once.
         let mut measured: HashMap<&str, f32> = HashMap::new();
         ui.fonts_mut(|fonts| {
