@@ -114,8 +114,7 @@ impl CsvViewer {
             let gutter_rect = Rect::from_min_max(
                 output.inner_rect.min,
                 egui::pos2(
-                    (output.inner_rect.left() + layout.gutter_width)
-                        .min(output.inner_rect.right()),
+                    (output.inner_rect.left() + layout.gutter_width).min(output.inner_rect.right()),
                     output.inner_rect.bottom(),
                 ),
             );
@@ -123,11 +122,7 @@ impl CsvViewer {
                 .painter()
                 .with_clip_rect(output.inner_rect.intersect(ui.clip_rect()));
             let mut gutter = Vec::with_capacity(visible_rows.len() + 2);
-            gutter.push(egui::Shape::rect_filled(
-                gutter_rect,
-                0.0,
-                BACKGROUND,
-            ));
+            gutter.push(egui::Shape::rect_filled(gutter_rect, 0.0, BACKGROUND));
             for (row_index, rect) in visible_rows {
                 let number = gutter_painter.layout_no_wrap(
                     (row_index + 1).to_string(),
@@ -148,8 +143,7 @@ impl CsvViewer {
             gutter_painter.set(gutter_shape, egui::Shape::Vec(gutter));
 
             // Paint after the body so its scrolling clip margin cannot bleed into the header.
-            ui.painter()
-                .rect_filled(header_rect, 0.0, BACKGROUND);
+            ui.painter().rect_filled(header_rect, 0.0, BACKGROUND);
             let header_clip = Rect::from_min_max(
                 egui::pos2(gutter_rect.right(), header_rect.top()),
                 egui::pos2(output.inner_rect.right(), header_rect.bottom()),
@@ -191,7 +185,11 @@ impl TableLayout {
         let number_font = FontId::monospace((font.size - 2.0).max(12.0));
         let gutter_width = (ui
             .painter()
-            .layout_no_wrap(data.rows.len().max(1).to_string(), number_font.clone(), MUTED)
+            .layout_no_wrap(
+                data.rows.len().max(1).to_string(),
+                number_font.clone(),
+                MUTED,
+            )
             .size()
             .x
             + 2.0 * ROW_NUMBER_PADDING)
@@ -441,8 +439,7 @@ mod tests {
         assert!(text.contains(&"1"));
         assert!(!text.contains(&"0"));
         assert!(
-            (label(&first, "1").0.center().y - label(&first, "P0001").0.center().y).abs()
-                < 0.1
+            (label(&first, "1").0.center().y - label(&first, "P0001").0.center().y).abs() < 0.1
         );
         assert!(text.len() < 100, "only visible records should be painted");
 
@@ -459,8 +456,7 @@ mod tests {
         assert!(text.contains(&"4000"));
         assert!(!text.contains(&"4001"));
         assert!(
-            (label(&last, "4000").0.center().y - label(&last, "P4000").0.center().y).abs()
-                < 0.1
+            (label(&last, "4000").0.center().y - label(&last, "P4000").0.center().y).abs() < 0.1
         );
         assert!(text.len() < 100);
         let q2_offset = viewer.files["q2"].as_ref().unwrap().scroll_offset;
@@ -468,8 +464,7 @@ mod tests {
         let other = draw(&mut viewer, &ctx, "q1", PEOPLE_Q1);
         assert!(painted_text(&other).contains(&"P0002"));
         assert!(
-            (label(&other, "1").0.center().y - label(&other, "P0002").0.center().y).abs()
-                < 0.1
+            (label(&other, "1").0.center().y - label(&other, "P0002").0.center().y).abs() < 0.1
         );
         let restored = draw(&mut viewer, &ctx, "q2", PEOPLE_Q2);
         assert!(painted_text(&restored).contains(&"P4000"));
@@ -522,14 +517,8 @@ mod tests {
         let gutter_right = body_clip.left() + layout.gutter_width;
         let content_width = layout.gutter_width + layout.width();
         let first_column_x = label(&first, "earliest_pickup_time").0.left();
-        let over_gutter = egui::pos2(
-            (body_clip.left() + gutter_right) / 2.0,
-            number.center().y,
-        );
-        let wheel_frame = draw_table(
-            &mut viewer,
-            wheel(over_gutter, egui::vec2(-160.0, 0.0)),
-        );
+        let over_gutter = egui::pos2((body_clip.left() + gutter_right) / 2.0, number.center().y);
+        let wheel_frame = draw_table(&mut viewer, wheel(over_gutter, egui::vec2(-160.0, 0.0)));
         assert!(viewer.files["q3"].as_ref().unwrap().scroll_offset.x > 0.0);
         let next_frame = draw_table(&mut viewer, vec![]);
         for frame in [&wheel_frame, &next_frame] {
@@ -550,10 +539,16 @@ mod tests {
         }
         assert!(label(&next_frame, "earliest_pickup_time").0.left() < first_column_x);
 
-        let draw_narrow = |viewer: &mut CsvViewer| {
-            draw_with_events(viewer, &ctx, "q3", PEOPLE_Q3, 320.0, vec![])
-        };
-        viewer.files.get_mut("q3").unwrap().as_mut().unwrap().scroll_offset.x = 0.0;
+        let draw_narrow =
+            |viewer: &mut CsvViewer| draw_with_events(viewer, &ctx, "q3", PEOPLE_Q3, 320.0, vec![]);
+        viewer
+            .files
+            .get_mut("q3")
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .scroll_offset
+            .x = 0.0;
         let narrow_start = draw_narrow(&mut viewer);
         let narrow_number = label(&narrow_start, "1").0;
         let file = viewer.files.get_mut("q3").unwrap().as_mut().unwrap();

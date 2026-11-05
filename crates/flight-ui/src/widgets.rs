@@ -23,7 +23,10 @@ pub(crate) fn primary_button(
         visuals.override_text_color = Some(text_color);
         for (widget, fill) in [
             (&mut visuals.widgets.inactive, ACCENT),
-            (&mut visuals.widgets.hovered, Color32::from_rgb(23, 133, 119)),
+            (
+                &mut visuals.widgets.hovered,
+                Color32::from_rgb(23, 133, 119),
+            ),
             (&mut visuals.widgets.active, Color32::from_rgb(19, 94, 84)),
         ] {
             widget.bg_fill = fill;
@@ -57,7 +60,8 @@ pub(crate) fn icon_button(
         } else {
             Color32::from_rgb(231, 239, 235)
         };
-        ui.painter().rect_filled(response.rect, CONTROL_RADIUS, fill);
+        ui.painter()
+            .rect_filled(response.rect, CONTROL_RADIUS, fill);
     }
     if response.has_focus() {
         ui.painter().rect_stroke(

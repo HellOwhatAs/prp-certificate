@@ -5,7 +5,12 @@ use crate::widgets;
 use eframe::egui::{self, Color32, RichText};
 
 impl FlightApp {
-    pub(super) fn request_storage(&mut self, operation: &str, q: Option<usize>, ctx: &egui::Context) {
+    pub(super) fn request_storage(
+        &mut self,
+        operation: &str,
+        q: Option<usize>,
+        ctx: &egui::Context,
+    ) {
         if self.storage_busy || (operation != "list" && self.busy()) {
             return;
         }

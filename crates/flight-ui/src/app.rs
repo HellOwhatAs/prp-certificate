@@ -844,15 +844,13 @@ impl eframe::App for FlightApp {
                 });
         }
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::new()
-                    .fill(BACKGROUND)
-                    .inner_margin(if self.page == Page::Materials {
-                        egui::Margin::ZERO
-                    } else {
-                        egui::Margin::symmetric(horizontal_margin, 0)
-                    }),
-            )
+            .frame(egui::Frame::new().fill(BACKGROUND).inner_margin(
+                if self.page == Page::Materials {
+                    egui::Margin::ZERO
+                } else {
+                    egui::Margin::symmetric(horizontal_margin, 0)
+                },
+            ))
             .show(ctx, |ui| {
                 if self.storage_open {
                     ui.disable();

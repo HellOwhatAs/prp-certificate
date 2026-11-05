@@ -157,8 +157,7 @@ impl FlightApp {
             }
             let export = ui
                 .add_enabled_ui(self.ready.is_some() && !self.busy(), |ui| {
-                    ui.add_sized(size, egui::Button::new("导出证书"))
-                        .clicked()
+                    ui.add_sized(size, egui::Button::new("导出证书")).clicked()
                 })
                 .inner;
             if export {
@@ -451,8 +450,7 @@ impl FlightApp {
             let clicked = child
                 .add_enabled(
                     index != 1 || !self.busy(),
-                    egui::Button::new(RichText::new(label).size(14.0))
-                        .min_size(rect.size()),
+                    egui::Button::new(RichText::new(label).size(14.0)).min_size(rect.size()),
                 )
                 .clicked();
             if clicked {

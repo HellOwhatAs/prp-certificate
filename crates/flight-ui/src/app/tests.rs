@@ -135,8 +135,8 @@ fn record_actions_still_open_verification_and_generation() {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        let (rect, _) = ui
-                            .allocate_exact_size(egui::vec2(296.0, 40.0), egui::Sense::hover());
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(296.0, 40.0), egui::Sense::hover());
                         app.record_actions(ui, &record, rect);
                     });
                 },
@@ -447,8 +447,7 @@ fn distinct_proof(q: usize, n: u16, team: &str) -> Verified {
     let mut item = proof(q);
     let mut nonce = [0; 16];
     nonce[..2].copy_from_slice(&n.to_le_bytes());
-    item.certificate["certificates"][0]["metadata"]["nonce"] =
-        json!(flight_format::nonce(&nonce));
+    item.certificate["certificates"][0]["metadata"]["nonce"] = json!(flight_format::nonce(&nonce));
     item.certificate["certificates"][0]["metadata"]["team"] = json!(team);
     item
 }
@@ -490,8 +489,7 @@ fn legacy_draft_must_not_force_unselected_questions_into_generation() {
     // Exact RON stored by the removed draft implementation, including stale selections.
     storage.values.insert(
         LEGACY_DRAFT_KEY.into(),
-        r#"(team:"甲",editing_record:None,active:(true,true,true),proofs:(None,None,None))"#
-            .into(),
+        r#"(team:"甲",editing_record:None,active:(true,true,true),proofs:(None,None,None))"#.into(),
     );
     for mask in 1..=7 {
         let mut app = application(Some(&storage));
@@ -658,9 +656,8 @@ fn completed_questions_are_reused_after_cancel_or_failure_in_the_same_session() 
         app.accept_proof(0, completed.clone()).unwrap();
         app.invalidate_generated();
         app.generate_certificate(&ctx);
-        app.backend.reply(
-            json!({"type":"result","result":{"scores":vec![vec![1u64;9]],"canProve":true}}),
-        );
+        app.backend
+            .reply(json!({"type":"result","result":{"scores":vec![vec![1u64;9]],"canProve":true}}));
         app.receive(&ctx);
         assert!(matches!(app.task.as_ref().unwrap().kind, Kind::Prove(1)));
         if cancel {
