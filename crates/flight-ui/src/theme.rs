@@ -10,8 +10,8 @@ pub(crate) const BACKGROUND: Color32 = Color32::from_rgb(245, 248, 247);
 pub(crate) const RECESSED: Color32 = Color32::from_rgb(237, 242, 239);
 pub(crate) const BORDER: Color32 = Color32::from_rgb(207, 221, 215);
 pub(crate) const RULE: Color32 = Color32::from_rgb(224, 233, 229);
-pub(crate) const CONTROL_RADIUS: u8 = 6;
-pub(crate) const CARD_RADIUS: u8 = 8;
+pub(crate) const CONTROL_RADIUS: u8 = 4;
+pub(crate) const CARD_RADIUS: u8 = 6;
 
 pub(crate) fn configure(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();

@@ -1,6 +1,6 @@
 use eframe::egui::{self, Color32};
 
-use crate::theme::{ACCENT, BORDER, CARD_RADIUS, CONTROL_RADIUS, MUTED, SURFACE};
+use crate::theme::{ACCENT, BORDER, CARD_RADIUS, CONTROL_RADIUS, SURFACE};
 
 pub(crate) fn card_frame() -> egui::Frame {
     egui::Frame::new()
@@ -18,9 +18,8 @@ pub(crate) fn primary_button(
     label: impl Into<egui::WidgetText>,
 ) -> egui::Response {
     ui.add_enabled_ui(enabled, |ui| {
-        let text_color = if ui.is_enabled() { SURFACE } else { MUTED };
         let visuals = ui.visuals_mut();
-        visuals.override_text_color = Some(text_color);
+        visuals.override_text_color = Some(SURFACE);
         for (widget, fill) in [
             (&mut visuals.widgets.inactive, ACCENT),
             (
