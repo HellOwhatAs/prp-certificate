@@ -8,6 +8,7 @@ const INK: Color32 = Color32::from_rgb(29, 54, 59);
 const MUTED: Color32 = Color32::from_rgb(98, 119, 119);
 const BORDER: Color32 = Color32::from_rgb(211, 222, 216);
 const TAB_BACKGROUND: Color32 = Color32::from_rgb(237, 242, 239);
+const CONTENT_HEADER_BACKGROUND: Color32 = Color32::from_rgb(245, 248, 247);
 const ROW_HEIGHT: f32 = 44.0;
 
 struct MaterialFile {
@@ -183,7 +184,7 @@ fn file_tab(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
     });
     if ui.is_rect_visible(rect) {
         let fill = if selected {
-            Color32::WHITE
+            CONTENT_HEADER_BACKGROUND
         } else if response.hovered() {
             Color32::from_rgb(226, 235, 230)
         } else {

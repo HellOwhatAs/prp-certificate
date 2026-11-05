@@ -274,7 +274,7 @@ impl PdfViewer {
 
     fn toolbar(&mut self, ui: &mut egui::Ui, pages: usize, zoom: f32) {
         let frame = egui::Frame::new()
-            .fill(Color32::WHITE)
+            .fill(super::CONTENT_HEADER_BACKGROUND)
             .inner_margin(Margin::symmetric(10, 5))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());

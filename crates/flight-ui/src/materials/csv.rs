@@ -5,7 +5,6 @@ use eframe::egui::{self, Color32, FontId, Painter, Rect, Sense, Stroke, Vec2};
 const ACCENT: Color32 = Color32::from_rgb(27, 118, 106);
 const INK: Color32 = Color32::from_rgb(29, 54, 59);
 const MUTED: Color32 = Color32::from_rgb(98, 119, 119);
-const PANEL: Color32 = Color32::from_rgb(245, 248, 247);
 const RULE: Color32 = Color32::from_rgb(224, 233, 229);
 const CELL_PADDING: f32 = 12.0;
 const MIN_COLUMN_WIDTH: f32 = 76.0;
@@ -98,7 +97,8 @@ impl CsvViewer {
             file.scroll_offset = output.state.offset;
 
             // Paint after the body so its scrolling clip margin cannot bleed into the header.
-            ui.painter().rect_filled(header_rect, 0.0, PANEL);
+            ui.painter()
+                .rect_filled(header_rect, 0.0, super::CONTENT_HEADER_BACKGROUND);
             let header_clip = Rect::from_min_max(
                 egui::pos2(output.inner_rect.left(), header_rect.top()),
                 egui::pos2(output.inner_rect.right(), header_rect.bottom()),
